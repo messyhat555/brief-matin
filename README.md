@@ -21,12 +21,25 @@ L'installeur détecte le vault Obsidian, compile `Brief Matin.app` dans
 `/Applications`, installe la commande `brief-matin` et programme l'ouverture
 automatique chaque jour ouvré. Il se termine par un diagnostic.
 
-Cliquer sur l'icône rafraîchit et affiche le brief. En ligne de commande :
+Cliquer sur l'icône rafraîchit et affiche le brief. ⌘R rafraîchit à la volée.
+
+**Les cases à cocher sont vraies.** Cliquer un devoir dans la fenêtre écrit
+`- [x]` dans la note Obsidian d'où il vient, et la tâche disparaît du brief.
+L'écriture est verrouillée : le fichier doit être dans le vault et la ligne
+visée doit bien être une case à cocher, sinon rien n'est écrit.
+
+**La journée est vivante.** Une barre situe l'heure courante parmi tes cours,
+le cours en cours est mis en avant, et le suivant affiche un compte à rebours
+qui se met à jour tout seul. Les séances qui débordent sur plusieurs jours —
+semaines de rattrapage, stages — sont ramenées à la journée affichée.
+
+En ligne de commande :
 
 ```bash
 brief-matin show      # régénère et ouvre la fenêtre
 brief-matin render    # régénère seulement le HTML
 brief-matin doctor    # diagnostic
+brief-matin cocher --fichier <note.md> --ligne 42   # cocher sans la fenêtre
 ```
 
 ## Les devoirs, depuis Obsidian

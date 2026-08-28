@@ -122,7 +122,7 @@ def lire_taches(cfg):
             matiere = fm.get("matiere") or f.parent.name
             note_date = fm.get("date") or ""
             section = ""
-            for line in txt.splitlines():
+            for no, line in enumerate(txt.splitlines(), 1):
                 if line.startswith("#"):
                     section = line.lstrip("#").strip()
                     continue
@@ -131,7 +131,8 @@ def lire_taches(cfg):
                     continue
                 texte = re.sub(r"[📅🔺⏫🔼🔽]", "", m.group(2)).strip()
                 item = {"texte": texte, "matiere": matiere, "note": f.stem,
-                        "note_date": note_date, "echeance": None}
+                        "note_date": note_date, "echeance": None,
+                        "fichier": str(f), "ligne": no}
                 # la revision se teste en premier : "a retravailler" contient
                 # "travail" et serait sinon pris pour un devoir
                 sec = sans_accents(section)
@@ -242,15 +243,28 @@ def zeus_planning(cfg, jour=None):
         raise ZeusError("Aucun groupe configuré — renseigne zeus.groupes ou zeus.groupe_nom")
     if not isinstance(data, list):
         return []
+    # certaines reservations couvrent plusieurs jours (semaines de rattrapage,
+    # stages) : on les ramene a la journee affichee, sinon elles ecrasent tout
+    jour_debut = dt.datetime.combine(jour, dt.time(0, 0))
+    jour_fin = dt.datetime.combine(jour, dt.time(23, 59, 59))
     out = []
     for r in data:
+        d0 = moment_local(r.get("startDate"))
+        d1 = moment_local(r.get("endDate"))
+        entiere = bool(d0 and d1 and d0 <= jour_debut and d1 >= jour_fin)
+        if d0:
+            d0 = max(d0, jour_debut)
+        if d1:
+            d1 = min(d1, jour_fin)
         out.append({
+            "toute_la_journee": entiere,
+            "id": r.get("idReservation"),
             "nom": r.get("name") or "Cours",
             "type": libelle_type(r.get("typeName")),
-            "debut": heure_locale(r.get("startDate")),
-            "fin": heure_locale(r.get("endDate")),
-            "debut_dt": moment_local(r.get("startDate")),
-            "fin_dt": moment_local(r.get("endDate")),
+            "debut": f"{d0:%H:%M}" if d0 else "",
+            "fin": f"{d1:%H:%M}" if d1 else "",
+            "debut_dt": d0,
+            "fin_dt": d1,
             "salles": ", ".join(s.get("name", "") for s in (r.get("rooms") or []) if s),
             "profs": ", ".join(
                 " ".join(filter(None, (t.get("firstName"), t.get("lastName"))))
@@ -287,7 +301,7 @@ CSS = """
   --line:#e7e4de; --card:#fffefc; --ombre:0 1px 2px rgba(20,18,25,.05);
   --accent:#6b4dff; --accent-doux:#efeaff;
   --rouge:#c0392b; --rouge-doux:#fdeceb; --orange:#a86a1e; --orange-doux:#fbf1e2;
-  --sat:58%; --lum:42%;
+  --sat:58%; --lum:42%; --survol:#f2f0ff; --vert:#1f6b45;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -295,7 +309,7 @@ CSS = """
     --line:#28262f; --card:#1c1b21; --ombre:none;
     --accent:#a996ff; --accent-doux:#241f3a;
     --rouge:#ff9384; --rouge-doux:#2e1c1c; --orange:#e5b167; --orange-doux:#2b2317;
-    --sat:52%; --lum:70%;
+    --sat:52%; --lum:70%; --survol:#232030; --vert:#77d6a4;
   }
 }
 * { box-sizing:border-box; }
@@ -359,9 +373,118 @@ section { margin-bottom:26px; }
 .alerte { background:var(--orange-doux); color:var(--orange); border-radius:10px;
   padding:10px 13px; font-size:12.5px; margin-bottom:20px; }
 .alerte b { font-weight:650; }
+/* ---- barre de journee ---- */
+.arc { position:relative; height:34px; margin:0 0 24px; }
+.arc .piste { position:absolute; inset:14px 0 auto; height:6px; border-radius:3px;
+  background:var(--line); }
+.arc .seg { position:absolute; top:14px; height:6px; border-radius:3px;
+  background:hsl(var(--h) var(--sat) var(--lum)); opacity:.85; }
+.arc .curseur { position:absolute; top:6px; width:2px; height:22px; border-radius:1px;
+  background:var(--accent); transition:left .6s ease; }
+.arc .curseur::after { content:""; position:absolute; top:-3px; left:-3px; width:8px;
+  height:8px; border-radius:50%; background:var(--accent); }
+.arc .borne { position:absolute; top:24px; font-size:10px; color:var(--muted);
+  font-variant-numeric:tabular-nums; }
+.arc .borne.fin { right:0; }
+
+/* ---- interactions ---- */
+.tache { cursor:pointer; transition:opacity .25s, transform .25s, background .15s; }
+.tache:hover { background:var(--survol); }
+.tache:active { transform:scale(.988); }
+.case { transition:background .15s, border-color .15s, opacity .15s; position:relative; }
+.tache:hover .case { border-color:var(--accent); opacity:1; }
+.tache.faite { opacity:0; transform:translateX(14px); pointer-events:none; }
+.tache.faite .txt { text-decoration:line-through; }
+.tache.faite .case { background:var(--accent); border-color:var(--accent); }
+.tache.faite .case::after { content:"✓"; position:absolute; inset:0; color:#fff;
+  font-size:10px; line-height:11px; text-align:center; font-weight:800; }
+.compte { font-size:11px; font-weight:600; color:var(--accent);
+  font-variant-numeric:tabular-nums; }
+.creneau .bloc { transition:background .3s, border-color .3s; }
+.fait-resume { color:var(--vert); font-size:12.5px; padding:9px 13px;
+  background:var(--card); border:1px solid var(--line); border-radius:10px;
+  margin-bottom:6px; }
 .pied { margin-top:28px; padding-top:12px; border-top:1px solid var(--line);
   color:var(--muted); font-size:11px; display:flex; justify-content:space-between; }
 """
+
+JS = r"""<script>
+(() => {
+  const pont = window.webkit?.messageHandlers?.brief;
+  const donnees = JSON.parse(document.getElementById("donnees").textContent);
+
+  /* --- cocher un devoir : ecrit dans la note Obsidian ------------------ */
+  document.querySelectorAll(".tache[data-fichier]").forEach(el => {
+    el.addEventListener("click", () => {
+      if (el.classList.contains("faite")) return;
+      if (!pont) { el.animate([{transform:"translateX(0)"},{transform:"translateX(-5px)"},
+        {transform:"translateX(5px)"},{transform:"translateX(0)"}], {duration:220}); return; }
+      el.classList.add("faite");
+      pont.postMessage({action:"cocher", fichier:el.dataset.fichier,
+                        ligne:parseInt(el.dataset.ligne, 10)});
+      setTimeout(() => {
+        const g = el.closest(".groupe");
+        el.remove();
+        if (g && !g.querySelector(".tache")) g.remove();
+        majCompteurs();
+      }, 260);
+    });
+  });
+
+  function majCompteurs() {
+    const n = document.querySelectorAll(".tache[data-fichier]").length;
+    document.querySelectorAll(".groupe").forEach(g => {
+      const t = g.querySelector(".groupe-titre");
+      const c = g.querySelectorAll(".tache").length;
+      if (t) t.textContent = t.textContent.replace(/ · \d+$/, " · " + c);
+    });
+    const p = document.querySelector(".pied span");
+    if (p) p.textContent = n + " devoir(s) · " + donnees.revisions + " à réviser";
+    const sec = document.querySelector("#rendre .vide-apres");
+    if (n === 0 && sec) sec.hidden = false;
+  }
+
+  /* --- le temps qui passe --------------------------------------------- */
+  const cours = donnees.cours.map(c => ({...c, d:new Date(c.debut), f:new Date(c.fin)}));
+
+  function humain(ms) {
+    const min = Math.round(ms / 60000);
+    if (min < 60) return "dans " + min + " min";
+    const h = Math.floor(min / 60), r = min % 60;
+    return "dans " + h + " h" + (r ? " " + String(r).padStart(2,"0") : "");
+  }
+
+  function tic() {
+    const now = new Date();
+    let encours = null, suivant = null;
+    for (const c of cours) {
+      if (c.d <= now && now <= c.f) encours = c;
+      else if (c.d > now && (!suivant || c.d < suivant.d)) suivant = c;
+    }
+    document.querySelectorAll(".creneau[data-id]").forEach(el => {
+      const id = el.dataset.id;
+      const est = encours && String(encours.id) === id;
+      el.classList.toggle("encours", !!est);
+      const et = el.querySelector(".etiq");
+      if (et) {
+        if (est) { et.textContent = "en ce moment"; et.hidden = false; }
+        else if (suivant && String(suivant.id) === id) {
+          et.textContent = "prochain · " + humain(suivant.d - now); et.hidden = false;
+        } else et.hidden = true;
+      }
+    });
+    const cur = document.querySelector(".arc .curseur");
+    if (cur && donnees.arc) {
+      const t0 = new Date(donnees.arc.debut), t1 = new Date(donnees.arc.fin);
+      const r = Math.min(1, Math.max(0, (now - t0) / (t1 - t0)));
+      cur.style.left = "calc(" + (r * 100).toFixed(2) + "% - 1px)";
+      cur.hidden = false;
+    }
+  }
+  tic();
+  setInterval(tic, 20000);
+})();
+</script>"""
 
 def teinte(nom):
     """Une couleur stable par matiere, pour la reconnaitre d'un coup d'oeil."""
@@ -422,6 +545,31 @@ def render_html(cfg, planning, planning_err, devoirs, revisions):
     P.append('<div class="apercu">'
              + (" · ".join(bouts) or "Rien de prévu aujourd’hui.") + "</div>")
 
+    if planning:
+        bornes = [c["debut_dt"] for c in planning if c.get("debut_dt")] \
+               + [c["fin_dt"] for c in planning if c.get("fin_dt")]
+        if bornes:
+            t0 = min(bornes).replace(minute=0)
+            t1 = max(bornes)
+            # la fourchette minimale se cale sur le jour affiche, pas sur aujourd'hui
+            jour_ref = min(bornes).date()
+            t0 = min(t0, dt.datetime.combine(jour_ref, dt.time(8, 0)))
+            t1 = max(t1, dt.datetime.combine(jour_ref, dt.time(19, 0)))
+            span = max((t1 - t0).total_seconds(), 1)
+            segs = []
+            for c in planning:
+                if not (c.get("debut_dt") and c.get("fin_dt")):
+                    continue
+                g = (c["debut_dt"] - t0).total_seconds() / span * 100
+                l = max((c["fin_dt"] - c["debut_dt"]).total_seconds() / span * 100, 1.2)
+                segs.append('<div class="seg" style="--h:' + str(teinte(c["nom"]))
+                            + ";left:" + f"{g:.2f}" + "%;width:" + f"{l:.2f}" + '%"></div>')
+            P.append('<div class="arc"><div class="piste"></div>' + "".join(segs)
+                     + '<div class="curseur" hidden></div>'
+                     + '<div class="borne">' + f"{t0:%H:%M}" + "</div>"
+                     + '<div class="borne fin">' + f"{t1:%H:%M}" + "</div></div>")
+            cfg["_arc"] = {"debut": t0.isoformat(), "fin": t1.isoformat()}
+
     z = cfg.get("zeus") or {}
     if z.get("token"):
         exp = expiration(z["token"])
@@ -449,23 +597,30 @@ def render_html(cfg, planning, planning_err, devoirs, revisions):
                              + e(duree_humaine(creux)) + " de battement</div></div>")
             classe = "creneau encours" if c is encours else "creneau"
             lieu = "en ligne" if c["en_ligne"] else c["salles"]
-            meta = " · ".join(x for x in (c["type"], lieu, c["profs"]) if x)
-            etiq = ""
+            morceaux = [c["type"], lieu, c["profs"]]
+            if c.get("toute_la_journee"):
+                morceaux.insert(0, "toute la journée")
+            meta = " · ".join(x for x in morceaux if x)
             if c is encours:
                 etiq = '<span class="etiq">en ce moment</span>'
             elif c is suivant:
                 etiq = '<span class="etiq">prochain</span>'
-            P.append('<div class="' + classe + '" style="--h:' + str(teinte(c["nom"]))
-                     + '"><div class="rail"><span class="h">' + e(c["debut"])
-                     + '</span><span class="f">' + e(c["fin"])
-                     + '</span></div><div class="bloc">' + etiq
+            else:
+                etiq = '<span class="etiq" hidden></span>'
+            P.append('<div class="' + classe + '" data-id="'
+                     + str(c.get("id", id(c))) + '" style="--h:' + str(teinte(c["nom"]))
+                     + '"><div class="rail">'
+                     + ('<span class="h">jour</span>' if c.get("toute_la_journee")
+                        else '<span class="h">' + e(c["debut"])
+                             + '</span><span class="f">' + e(c["fin"]) + "</span>")
+                     + '</div><div class="bloc">' + etiq
                      + '<div class="nom">' + e(c["nom"]) + "</div>"
                      + ('<div class="meta">' + e(meta) + "</div>" if meta else "")
                      + "</div></div>")
             precedent = c
     P.append("</section>")
 
-    P.append('<section><h2>À rendre</h2>')
+    P.append('<section id="rendre"><h2>À rendre</h2>')
     if not devoirs:
         P.append('<div class="vide">Rien à rendre. Profites-en.</div>')
     else:
@@ -480,7 +635,9 @@ def render_html(cfg, planning, planning_err, devoirs, revisions):
             for d in lot:
                 _, lbl = urgence(d["echeance"], a)
                 quand = ('<span class="quand">' + e(lbl) + "</span>") if lbl else ""
-                P.append('<div class="tache" style="--h:' + str(teinte(d["matiere"]))
+                P.append('<div class="tache" data-fichier="' + e(d.get("fichier", ""))
+                         + '" data-ligne="' + str(d.get("ligne", 0))
+                         + '" style="--h:' + str(teinte(d["matiere"]))
                          + '"><div class="case"></div><div><div class="txt">'
                          + e(d["texte"]) + '</div><div class="bas">'
                          + '<span class="matiere"><span class="pastille"></span>'
@@ -499,6 +656,18 @@ def render_html(cfg, planning, planning_err, devoirs, revisions):
     P.append('<div class="pied"><span>' + str(len(devoirs)) + " devoir(s) · "
              + str(len(revisions)) + " à réviser</span><span>"
              + f"{maintenant:%H:%M}" + "</span></div>")
+    donnees = {
+        "revisions": len(revisions),
+        "arc": cfg.pop("_arc", None),
+        "cours": [{"id": c.get("id", i), "nom": c["nom"],
+                   "debut": c["debut_dt"].isoformat() if c.get("debut_dt") else None,
+                   "fin": c["fin_dt"].isoformat() if c.get("fin_dt") else None}
+                  for i, c in enumerate(planning) if c.get("debut_dt")],
+    }
+    P.append('<script id="donnees" type="application/json">'
+             + json.dumps(donnees, ensure_ascii=False).replace("</", "<\\/")
+             + "</script>")
+    P.append(JS)
     P.append("</body></html>")
     return "\n".join(P)
 
@@ -641,6 +810,43 @@ def cmd_zeus_groupe(cfg, args):
     print(f"  [OK ] groupe(s) enregistre(s) : {ids}\n")
     return cmd_zeus_test(cfg, args)
 
+def cmd_cocher(cfg, args):
+    """Coche (ou decoche) une case dans une note du vault.
+
+    On verifie que le fichier est bien dans le vault et que la ligne visee est
+    bien une case a cocher : sans cela, un decalage de numerotation ecrirait
+    n'importe ou dans une note."""
+    vault = Path(cfg["vault"]).resolve()
+    cible = Path(args.fichier).resolve()
+    try:
+        cible.relative_to(vault)
+    except ValueError:
+        print(f"  [KO ] {cible} est hors du vault, rien n'est écrit")
+        return 1
+    lignes = cible.read_text(encoding="utf-8").splitlines(keepends=True)
+    i = args.ligne - 1
+    if not 0 <= i < len(lignes):
+        print(f"  [KO ] la ligne {args.ligne} n'existe pas dans {cible.name}")
+        return 1
+    # on met la fin de ligne de cote : '.' ne la capture pas, et sans elle
+    # la ligne suivante se retrouverait collee a celle-ci
+    corps, fin = lignes[i], ""
+    for term in ("\r\n", "\n", "\r"):
+        if corps.endswith(term):
+            corps, fin = corps[: -len(term)], term
+            break
+    m = re.match(r"(\s*[-*]\s*\[)( |x|X)(\].*)$", corps)
+    if not m:
+        print(f"  [KO ] la ligne {args.ligne} n'est pas une case à cocher")
+        return 1
+    neuf = "x" if args.etat == "fait" else " "
+    lignes[i] = m.group(1) + neuf + m.group(3) + fin
+    tmp = cible.with_suffix(cible.suffix + ".tmp")
+    tmp.write_text("".join(lignes), encoding="utf-8")
+    os.replace(tmp, cible)
+    print(f"  [OK ] {cible.name} ligne {args.ligne} -> [{neuf.strip() or ' '}]")
+    return 0
+
 def cmd_doctor(cfg, args):
     ok = True
     def chk(label, cond, extra=""):
@@ -675,12 +881,16 @@ def main():
     p = sub.add_parser("zeus-groupes"); p.add_argument("--filtre")
     sub.add_parser("zeus-test"); sub.add_parser("zeus-coller")
     p = sub.add_parser("zeus-groupe"); p.add_argument("ids", nargs="+")
+    p = sub.add_parser("cocher")
+    p.add_argument("--fichier", required=True)
+    p.add_argument("--ligne", type=int, required=True)
+    p.add_argument("--etat", choices=("fait", "afaire"), default="fait")
     sub.add_parser("doctor")
     args = ap.parse_args()
     cfg = load_config()
     return {"render": cmd_render, "show": cmd_show, "zeus-groupes": cmd_zeus_groupes,
             "zeus-test": cmd_zeus_test, "zeus-coller": cmd_zeus_coller, "zeus-groupe": cmd_zeus_groupe,
-            "doctor": cmd_doctor,
+            "cocher": cmd_cocher, "doctor": cmd_doctor,
             }[args.cmd or "show"](cfg, args)
 
 if __name__ == "__main__":

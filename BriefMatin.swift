@@ -9,7 +9,8 @@ let base = FileManager.default.homeDirectoryForCurrentUser
 let htmlURL = base.appendingPathComponent("brief.html")
 let script  = base.appendingPathComponent("brief.py")
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
+                         WKScriptMessageHandler {
     var window: NSWindow!
     var web: WKWebView!
 
@@ -32,6 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         window.setFrameAutosaveName("BriefMatin")
 
         let cfg = WKWebViewConfiguration()
+        // pont page -> app : la page demande de cocher, l'app ecrit dans la note
+        cfg.userContentController.add(self, name: "brief")
         web = WKWebView(frame: window.contentView!.bounds, configuration: cfg)
         web.autoresizingMask = [.width, .height]
         web.navigationDelegate = self
@@ -44,6 +47,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         NSApp.activate(ignoringOtherApps: true)
 
         refresh()
+    }
+
+    /// Recoit les demandes de la page (cocher un devoir).
+    func userContentController(_ c: WKUserContentController,
+                               didReceive message: WKScriptMessage) {
+        guard let corps = message.body as? [String: Any],
+              corps["action"] as? String == "cocher",
+              let fichier = corps["fichier"] as? String,
+              let ligne = corps["ligne"] as? Int, ligne > 0 else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            p.arguments = ["python3", script.path, "cocher",
+                           "--fichier", fichier, "--ligne", String(ligne),
+                           "--etat", "fait"]
+            p.standardOutput = Pipe(); p.standardError = Pipe()
+            try? p.run()
+            p.waitUntilExit()
+        }
     }
 
     /// Regenere le brief puis le charge. Si la generation echoue, on affiche
@@ -73,7 +95,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         }
     }
 
-    // Cmd-R recharge, Cmd-W ferme
+    @objc func rafraichir() { refresh() }
+
+    // Cmd-W ferme
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool {
         return true
     }
@@ -88,7 +112,8 @@ let menu = NSMenu()
 let item = NSMenuItem()
 menu.addItem(item)
 let sub = NSMenu()
-sub.addItem(withTitle: "Rafraîchir", action: #selector(NSWindow.close), keyEquivalent: "r")
+sub.addItem(withTitle: "Rafraîchir", action: #selector(AppDelegate.rafraichir),
+            keyEquivalent: "r")
 sub.addItem(withTitle: "Fermer", action: #selector(NSWindow.performClose(_:)),
             keyEquivalent: "w")
 sub.addItem(withTitle: "Quitter", action: #selector(NSApplication.terminate(_:)),
