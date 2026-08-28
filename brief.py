@@ -225,12 +225,12 @@ def zeus_token(cfg):
         return z["token"].strip()
     raise ZeusError("Aucun accès Zeus configuré — renseigne app_id ou token dans la config")
 
-def zeus_planning(cfg, jour=None):
+def zeus_reservations(cfg, d0, d1, tok=None):
+    """Interroge Zeus une seule fois pour une plage de dates."""
     z = cfg.get("zeus") or {}
-    jour = jour or dt.date.today()
-    tok = zeus_token(cfg)
-    debut = dt.datetime.combine(jour, dt.time(0, 0)).isoformat()
-    fin = dt.datetime.combine(jour, dt.time(23, 59)).isoformat()
+    tok = tok or zeus_token(cfg)
+    debut = dt.datetime.combine(d0, dt.time(0, 0)).isoformat()
+    fin = dt.datetime.combine(d1, dt.time(23, 59)).isoformat()
     if z.get("groupes"):
         data = http(f"{z['base_url']}/api/reservation/filter/displayable",
                     {"groups": z["groupes"], "startDate": debut, "endDate": fin}, tok)
@@ -241,16 +241,21 @@ def zeus_planning(cfg, jour=None):
                      "startDate": debut, "endDate": fin}, tok)
     else:
         raise ZeusError("Aucun groupe configuré — renseigne zeus.groupes ou zeus.groupe_nom")
-    if not isinstance(data, list):
-        return []
-    # certaines reservations couvrent plusieurs jours (semaines de rattrapage,
-    # stages) : on les ramene a la journee affichee, sinon elles ecrasent tout
+    return data if isinstance(data, list) else []
+
+def mise_en_forme(data, jour):
+    """Ramene les reservations a une journee donnee.
+
+    Certaines couvrent plusieurs jours (semaines de rattrapage, stages) : sans
+    ce decoupage elles ecraseraient tout l'affichage."""
     jour_debut = dt.datetime.combine(jour, dt.time(0, 0))
     jour_fin = dt.datetime.combine(jour, dt.time(23, 59, 59))
     out = []
     for r in data:
         d0 = moment_local(r.get("startDate"))
         d1 = moment_local(r.get("endDate"))
+        if d0 and d1 and (d1 < jour_debut or d0 > jour_fin):
+            continue                      # cette seance ne touche pas ce jour
         entiere = bool(d0 and d1 and d0 <= jour_debut and d1 >= jour_fin)
         if d0:
             d0 = max(d0, jour_debut)
@@ -273,6 +278,18 @@ def zeus_planning(cfg, jour=None):
         })
     out.sort(key=lambda c: c["debut"])
     return out
+
+def zeus_planning(cfg, jour=None):
+    jour = jour or dt.date.today()
+    return mise_en_forme(zeus_reservations(cfg, jour, jour), jour)
+
+def zeus_semaine(cfg, jour=None):
+    """Le planning de la semaine, jour par jour (lundi -> dimanche)."""
+    jour = jour or dt.date.today()
+    lundi = jour - dt.timedelta(days=jour.weekday())
+    jours = [lundi + dt.timedelta(days=i) for i in range(7)]
+    data = zeus_reservations(cfg, jours[0], jours[-1])
+    return {j: mise_en_forme(data, j) for j in jours}
 
 # --------------------------------------------------------------------------
 # rendu HTML
@@ -315,7 +332,7 @@ CSS = """
 * { box-sizing:border-box; }
 html { -webkit-font-smoothing:antialiased; }
 body {
-  margin:0; background:var(--bg); color:var(--fg);
+  margin:0; background:var(--bg); color:var(--fg); overflow-x:hidden;
   font:14.5px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
   padding:26px 22px 34px;
 }
@@ -404,6 +421,79 @@ section { margin-bottom:26px; }
 .fait-resume { color:var(--vert); font-size:12.5px; padding:9px 13px;
   background:var(--card); border:1px solid var(--line); border-radius:10px;
   margin-bottom:6px; }
+/* ---- navigation entre vues ---- */
+.onglets { display:flex; gap:4px; margin:0 0 20px; background:var(--line);
+  padding:3px; border-radius:9px; }
+.onglet { flex:1; text-align:center; font-size:12px; font-weight:600; padding:5px 0;
+  border-radius:6px; color:var(--fg2); cursor:pointer; user-select:none;
+  transition:background .15s, color .15s; }
+.onglet.actif { background:var(--card); color:var(--fg); box-shadow:var(--ombre); }
+.onglet .cle { font-size:9px; opacity:.5; margin-left:3px; }
+.vue { display:none; }
+.vue.active { display:block; }
+
+/* ---- vue semaine ---- */
+.sem-tete { display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:11px; }
+.sem-tete .titre { font-size:13px; font-weight:650; }
+.fleche { cursor:pointer; padding:2px 9px; border-radius:6px; color:var(--fg2);
+  background:var(--card); border:1px solid var(--line); font-size:12px;
+  user-select:none; }
+.fleche:hover { color:var(--accent); border-color:var(--accent); }
+.bande { display:flex; gap:5px; align-items:center; background:var(--card);
+  border:1px solid var(--line); border-left:3px solid hsl(var(--h) var(--sat) var(--lum));
+  border-radius:7px; padding:5px 9px; font-size:11.5px; margin-bottom:7px; }
+.bande .jours { color:var(--muted); margin-left:auto; font-size:10.5px; }
+.grille { display:grid; grid-template-columns:30px repeat(var(--nj), minmax(0,1fr));
+  gap:3px; }
+.axe { position:relative; }
+.axe span { position:absolute; right:3px; font-size:9px; color:var(--muted);
+  transform:translateY(-4px); font-variant-numeric:tabular-nums; }
+.jour-col { position:relative; background:var(--card); border:1px solid var(--line);
+  border-radius:7px; overflow:hidden; }
+.jour-col.aujourdhui { border-color:var(--accent); }
+.jour-tete { text-align:center; font-size:10px; font-weight:650; color:var(--fg2);
+  padding:3px 0; text-transform:uppercase; letter-spacing:.04em; }
+.jour-tete.aujourdhui { color:var(--accent); }
+.jour-tete small { display:block; font-weight:500; color:var(--muted); font-size:9px; }
+.seance { position:absolute; left:2px; right:2px; border-radius:5px; padding:3px 4px;
+  font-size:9px; line-height:1.2; overflow:hidden; color:#fff;
+  overflow-wrap:anywhere; hyphens:auto;
+  background:hsl(var(--h) var(--sat) 42%); cursor:default; }
+@media (prefers-color-scheme: dark) {
+  .seance { background:hsl(var(--h) var(--sat) 34%); color:#f2f1ee; }
+}
+.seance b { display:block; font-weight:700; font-size:8.5px; opacity:.85; }
+.ligne-now { position:absolute; left:0; right:0; height:1.5px; background:var(--accent);
+  z-index:3; }
+.ligne-now::before { content:""; position:absolute; left:0; top:-2px; width:5px;
+  height:5px; border-radius:50%; background:var(--accent); }
+.sem-vide { color:var(--muted); font-size:12.5px; padding:12px; text-align:center; }
+
+/* ---- vue focus ---- */
+.focus { text-align:center; padding:14px 4px 6px; }
+.focus .cadre { font-size:11px; text-transform:uppercase; letter-spacing:.1em;
+  color:var(--accent); font-weight:700; margin-bottom:14px; }
+.focus .chose { font-size:20px; line-height:1.32; font-weight:600; letter-spacing:-.3px;
+  margin:0 auto 14px; max-width:26em; }
+.focus .contexte { color:var(--fg2); font-size:13px; margin-bottom:4px; }
+.focus .quand-gros { color:var(--muted); font-size:12.5px; margin-bottom:22px;
+  font-variant-numeric:tabular-nums; }
+.actions { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; }
+.bouton { font-size:13px; font-weight:600; padding:9px 17px; border-radius:9px;
+  cursor:pointer; user-select:none; border:1px solid var(--line);
+  background:var(--card); color:var(--fg); transition:transform .12s, background .15s; }
+.bouton:hover { background:var(--survol); }
+.bouton:active { transform:scale(.96); }
+.bouton.fort { background:var(--accent); color:#fff; border-color:transparent; }
+.bouton.fort:hover { filter:brightness(1.08); }
+.apres { margin-top:26px; padding-top:14px; border-top:1px solid var(--line);
+  text-align:left; }
+.apres-titre { font-size:10.5px; text-transform:uppercase; letter-spacing:.09em;
+  color:var(--muted); font-weight:600; margin-bottom:7px; }
+.apres-item { font-size:12.5px; color:var(--fg2); padding:3px 0; display:flex;
+  gap:7px; align-items:center; }
+.focus-vide { color:var(--muted); font-size:14px; padding:34px 10px; text-align:center; }
 .pied { margin-top:28px; padding-top:12px; border-top:1px solid var(--line);
   color:var(--muted); font-size:11px; display:flex; justify-content:space-between; }
 """
@@ -481,6 +571,87 @@ JS = r"""<script>
       cur.hidden = false;
     }
   }
+
+  /* --- navigation entre les vues -------------------------------------- */
+  function montrer(nom) {
+    document.querySelectorAll(".vue").forEach(v => v.classList.toggle("active", v.id === "v-" + nom));
+    document.querySelectorAll(".onglet").forEach(o => o.classList.toggle("actif", o.dataset.vue === nom));
+    if (nom === "focus") dessineFocus();
+  }
+  document.querySelectorAll(".onglet").forEach(o =>
+    o.addEventListener("click", () => montrer(o.dataset.vue)));
+  document.addEventListener("keydown", ev => {
+    if (ev.key === "1") montrer("jour");
+    else if (ev.key === "2") montrer("semaine");
+    else if (ev.key === "3") montrer("focus");
+  });
+
+  /* --- semaine precedente / suivante ----------------------------------- */
+  let sem = 0;
+  document.querySelectorAll(".fleche").forEach(f =>
+    f.addEventListener("click", () => {
+      const n = donnees.nb_semaines;
+      sem = Math.min(Math.max(sem + parseInt(f.dataset.pas, 10), 0), n - 1);
+      document.querySelectorAll(".bloc-sem").forEach(b =>
+        b.hidden = parseInt(b.dataset.sem, 10) !== sem);
+    }));
+
+  /* --- focus : une seule chose ----------------------------------------- */
+  let iFocus = 0;
+  const faits = new Set();
+
+  function dessineFocus() {
+    const restants = donnees.focus.filter((_, i) => !faits.has(i));
+    const cible = document.getElementById("focus-ici");
+    if (!restants.length) {
+      cible.innerHTML = '<div class="focus-vide">Rien d\'urgent.<br>Tu peux souffler.</div>';
+      return;
+    }
+    iFocus = Math.min(iFocus, restants.length - 1);
+    const c = restants[iFocus];
+    const idx = donnees.focus.indexOf(c);
+    let quand = c.quand || "";
+    if (c.genre === "cours" && c.debut) {
+      const d = new Date(c.debut), f = new Date(c.fin), now = new Date();
+      quand = (d <= now && now <= f) ? "jusqu'à " + f.toTimeString().slice(0, 5)
+                                     : "à " + d.toTimeString().slice(0, 5) + " · " + humain(d - now);
+    }
+    const suite = restants.slice(iFocus + 1, iFocus + 4).map(x =>
+      '<div class="apres-item"><span class="pastille" style="--h:'
+      + (x.teinte ?? 250) + '"></span>' + echapper(x.titre) + "</div>").join("");
+
+    cible.innerHTML =
+      '<div class="focus"><div class="cadre">' + echapper(c.cadre) + "</div>"
+      + '<div class="chose">' + echapper(c.titre) + "</div>"
+      + (c.contexte ? '<div class="contexte">' + echapper(c.contexte) + "</div>" : "")
+      + (quand ? '<div class="quand-gros">' + echapper(quand) + "</div>" : "")
+      + '<div class="actions">'
+      + (c.genre === "devoir" ? '<div class="bouton fort" id="f-fait">C\'est fait</div>' : "")
+      + (restants.length > 1 ? '<div class="bouton" id="f-autre">Autre chose</div>' : "")
+      + "</div>"
+      + (suite ? '<div class="apres"><div class="apres-titre">Et ensuite</div>' + suite + "</div>" : "")
+      + "</div>";
+
+    const autre = document.getElementById("f-autre");
+    if (autre) autre.addEventListener("click", () => {
+      iFocus = (iFocus + 1) % restants.length; dessineFocus();
+    });
+    const fait = document.getElementById("f-fait");
+    if (fait) fait.addEventListener("click", () => {
+      if (pont && c.fichier) {
+        pont.postMessage({action: "cocher", fichier: c.fichier, ligne: c.ligne});
+        const jumeau = document.querySelector('.tache[data-fichier="' + CSS.escape(c.fichier)
+                                              + '"][data-ligne="' + c.ligne + '"]');
+        if (jumeau) { jumeau.remove(); majCompteurs(); }
+      }
+      faits.add(idx); iFocus = 0; dessineFocus();
+    });
+  }
+
+  function echapper(t) {
+    const d = document.createElement("div"); d.textContent = t ?? ""; return d.innerHTML;
+  }
+
   tic();
   setInterval(tic, 20000);
 })();
@@ -514,7 +685,121 @@ BUCKETS = [
     ("",        "Sans échéance", lambda d: d is None),
 ]
 
-def render_html(cfg, planning, planning_err, devoirs, revisions):
+def render_grille(jours_map, maintenant):
+    """Une semaine en grille : colonnes = jours, axe vertical = heures."""
+    bandes, timees = [], {}
+    for j, cs in jours_map.items():
+        timees[j] = [c for c in cs if not c.get("toute_la_journee")]
+        for c in cs:
+            if c.get("toute_la_journee"):
+                bandes.append((j, c))
+
+    jours = sorted(jours_map)
+    # samedi et dimanche n'apparaissent que s'il s'y passe quelque chose
+    visibles = [j for j in jours
+                if j.weekday() < 5 or timees.get(j) or any(b[0] == j for b in bandes)]
+    if not visibles:
+        return '<div class="sem-vide">Aucun cours cette semaine.</div>'
+
+    heures = [c["debut_dt"].hour + c["debut_dt"].minute / 60
+              for j in visibles for c in timees.get(j, [])]
+    fins = [c["fin_dt"].hour + c["fin_dt"].minute / 60
+            for j in visibles for c in timees.get(j, [])]
+    h0 = int(min(heures)) if heures else 8
+    h1 = int(fins and -(-max(fins) // 1) or 19)
+    h0, h1 = max(6, min(h0, 9)), min(23, max(h1, 18))
+    span = max(h1 - h0, 1)
+    hauteur = int(span * 30)
+
+    P = []
+    for j, c in bandes:
+        P.append('<div class="bande" style="--h:' + str(teinte(c["nom"])) + '"><span>'
+                 + e(c["nom"]) + '</span><span class="jours">'
+                 + JOURS[j.weekday()][:3] + " · toute la journée</span></div>")
+
+    P.append('<div class="grille" style="--nj:' + str(len(visibles)) + '">')
+    P.append('<div></div>')
+    for j in visibles:
+        cl = " aujourdhui" if j == maintenant.date() else ""
+        P.append('<div class="jour-tete' + cl + '">' + JOURS[j.weekday()][:3]
+                 + "<small>" + str(j.day) + "</small></div>")
+
+    axe = ['<div class="axe" style="height:' + str(hauteur) + 'px">']
+    for h in range(h0, h1 + 1):
+        top = (h - h0) / span * 100
+        axe.append('<span style="top:' + f"{top:.1f}" + '%">' + f"{h:02d}" + "</span>")
+    axe.append("</div>")
+    P.append("".join(axe))
+
+    for j in visibles:
+        cl = " aujourdhui" if j == maintenant.date() else ""
+        col = ['<div class="jour-col' + cl + '" style="height:' + str(hauteur) + 'px">']
+        for c in timees.get(j, []):
+            d = c["debut_dt"].hour + c["debut_dt"].minute / 60
+            f = c["fin_dt"].hour + c["fin_dt"].minute / 60
+            top = max((d - h0) / span * 100, 0)
+            haut = max((f - d) / span * 100, 4.5)
+            col.append('<div class="seance" style="--h:' + str(teinte(c["nom"]))
+                       + ";top:" + f"{top:.2f}" + "%;height:" + f"{haut:.2f}" + '%"'
+                       + ' title="' + e(c["nom"]) + " · " + e(c["debut"]) + "–"
+                       + e(c["fin"]) + (" · " + e(c["salles"]) if c["salles"] else "")
+                       + '"><b>' + e(c["debut"]) + "</b>" + e(c["nom"]) + "</div>")
+        if j == maintenant.date():
+            now = maintenant.hour + maintenant.minute / 60
+            if h0 <= now <= h1:
+                col.append('<div class="ligne-now" style="top:'
+                           + f"{(now - h0) / span * 100:.2f}" + '%"></div>')
+        col.append("</div>")
+        P.append("".join(col))
+    P.append("</div>")
+    return "".join(P)
+
+
+def candidats_focus(planning, devoirs, revisions, maintenant):
+    """La liste ordonnee de ce qu'il y a de plus important a faire, maintenant.
+
+    Le premier element est "la chose" ; les suivants servent au bouton
+    "autre chose" et a l'apercu du dessous."""
+    a = maintenant.date()
+    out = []
+    for c in planning:
+        d0, d1 = c.get("debut_dt"), c.get("fin_dt")
+        if not (d0 and d1) or d1 < maintenant:
+            continue
+        imminent = (d0 - maintenant).total_seconds() / 60
+        encours = d0 <= maintenant <= d1
+        lieu = "en ligne" if c["en_ligne"] else c["salles"]
+        out.append({
+            "rang": 0 if encours else (2 if imminent <= 45 else 4),
+            "genre": "cours",
+            "cadre": "Tu es en cours" if encours else "Prochain cours",
+            "titre": c["nom"],
+            "contexte": " · ".join(x for x in (c["type"], lieu, c["profs"]) if x),
+            "debut": d0.isoformat(), "fin": d1.isoformat(),
+            "quand": ("jusqu'à " + c["fin"]) if encours else ("à " + c["debut"]),
+        })
+    for d in devoirs:
+        jours = None if d["echeance"] is None else (d["echeance"] - a).days
+        rang = (1 if (jours is not None and jours < 0) else
+                3 if jours == 0 else 5 if jours == 1 else
+                6 if (jours is not None and jours <= 7) else 8)
+        _, lbl = urgence(d["echeance"], a)
+        out.append({
+            "rang": rang, "genre": "devoir",
+            "cadre": "À rendre" + (" — en retard" if rang == 1 else ""),
+            "titre": d["texte"], "contexte": d["matiere"], "quand": lbl,
+            "fichier": d.get("fichier"), "ligne": d.get("ligne"),
+            "teinte": teinte(d["matiere"]),
+        })
+    for r in revisions[:4]:
+        out.append({"rang": 7, "genre": "revision", "cadre": "À réviser",
+                    "titre": r["texte"], "contexte": r["matiere"], "quand": "",
+                    "teinte": teinte(r["matiere"])})
+    out.sort(key=lambda x: x["rang"])
+    return out
+
+
+def render_html(cfg, planning, planning_err, devoirs, revisions, semaines=None):
     maintenant = dt.datetime.now()
     a = maintenant.date()
     P = ['<!doctype html><html lang="fr"><head><meta charset="utf-8">',
@@ -582,6 +867,12 @@ def render_html(cfg, planning, planning_err, devoirs, revisions):
                 P.append('<div class="alerte"><b>Accès Zeus bientôt expiré</b> ('
                          + str(int(reste)) + " h). Pense à recopier ton jeton.</div>")
 
+    P.append('<div class="onglets">'
+             '<div class="onglet actif" data-vue="jour">Jour<span class="cle">1</span></div>'
+             '<div class="onglet" data-vue="semaine">Semaine<span class="cle">2</span></div>'
+             '<div class="onglet" data-vue="focus">Focus<span class="cle">3</span></div>'
+             "</div>")
+    P.append('<div class="vue active" id="v-jour">')
     P.append('<section><h2>La journée</h2>')
     if planning_err:
         P.append('<div class="vide">Planning indisponible — ' + e(planning_err) + "</div>")
@@ -656,8 +947,34 @@ def render_html(cfg, planning, planning_err, devoirs, revisions):
     P.append('<div class="pied"><span>' + str(len(devoirs)) + " devoir(s) · "
              + str(len(revisions)) + " à réviser</span><span>"
              + f"{maintenant:%H:%M}" + "</span></div>")
+    P.append("</div>")   # fin de la vue Jour
+
+    P.append('<div class="vue" id="v-semaine">')
+    sems = semaines or {}
+    if not sems:
+        P.append('<div class="sem-vide">Semaine indisponible '
+                 '— accès Zeus non configuré.</div>')
+    for idx, (lundi, jours_map) in enumerate(sorted(sems.items())):
+        P.append('<div class="bloc-sem" data-sem="' + str(idx) + '"'
+                 + ("" if idx == 0 else " hidden") + '>')
+        fin = lundi + dt.timedelta(days=6)
+        titre = ("Semaine du " + str(lundi.day) + " " + MOIS[lundi.month - 1]
+                 if lundi.month == fin.month else
+                 "Du " + str(lundi.day) + " " + MOIS[lundi.month - 1] + " au "
+                 + str(fin.day) + " " + MOIS[fin.month - 1])
+        P.append('<div class="sem-tete"><span class="fleche" data-pas="-1">‹</span>'
+                 '<span class="titre">' + e(titre) + "</span>"
+                 '<span class="fleche" data-pas="1">›</span></div>')
+        P.append(render_grille(jours_map, maintenant))
+        P.append("</div>")
+    P.append("</div>")
+
+    P.append('<div class="vue" id="v-focus"><div id="focus-ici"></div></div>')
+
     donnees = {
         "revisions": len(revisions),
+        "focus": candidats_focus(planning, devoirs, revisions, maintenant),
+        "nb_semaines": len(sems),
         "arc": cfg.pop("_arc", None),
         "cours": [{"id": c.get("id", i), "nom": c["nom"],
                    "debut": c["debut_dt"].isoformat() if c.get("debut_dt") else None,
@@ -677,14 +994,22 @@ def render_html(cfg, planning, planning_err, devoirs, revisions):
 
 def build(cfg):
     devoirs, revisions = lire_taches(cfg)
-    planning, err = [], None
+    planning, semaines, err = [], {}, None
     try:
-        planning = zeus_planning(cfg)
+        # un seul appel couvre le jour, la semaine en cours et la suivante
+        auj = dt.date.today()
+        lundi = auj - dt.timedelta(days=auj.weekday())
+        data = zeus_reservations(cfg, lundi, lundi + dt.timedelta(days=13))
+        planning = mise_en_forme(data, auj)
+        for w in (0, 1):
+            l = lundi + dt.timedelta(days=7 * w)
+            semaines[l] = {l + dt.timedelta(days=i): mise_en_forme(
+                data, l + dt.timedelta(days=i)) for i in range(7)}
     except ZeusError as ex:
         err = str(ex)
         log(f"Zeus: {ex}", "WARN")
     BASE.mkdir(parents=True, exist_ok=True)
-    OUT_HTML.write_text(render_html(cfg, planning, err, devoirs, revisions),
+    OUT_HTML.write_text(render_html(cfg, planning, err, devoirs, revisions, semaines),
                         encoding="utf-8")
     return planning, err, devoirs, revisions
 

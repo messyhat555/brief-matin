@@ -28,6 +28,20 @@ Cliquer sur l'icône rafraîchit et affiche le brief. ⌘R rafraîchit à la vol
 L'écriture est verrouillée : le fichier doit être dans le vault et la ligne
 visée doit bien être une case à cocher, sinon rien n'est écrit.
 
+**Trois vues**, au clic sur les onglets ou aux touches `1` `2` `3` :
+
+| Vue | Contenu |
+| --- | --- |
+| **Jour** | la timeline du jour, les devoirs groupés par urgence, les révisions |
+| **Semaine** | l'emploi du temps en grille, cette semaine et la suivante (`‹` `›`) |
+| **Focus** | *une seule chose à faire maintenant*, en grand, et rien d'autre |
+
+La vue **Focus** choisit elle-même la chose la plus importante : le cours en
+cours s'il y en a un, sinon un devoir en retard, sinon le cours qui commence
+dans moins de 45 min, sinon le devoir dû aujourd'hui, et ainsi de suite jusqu'aux
+révisions. « C'est fait » coche le devoir dans Obsidian, « Autre chose » passe au
+suivant, et un aperçu « et ensuite » montre les trois qui viennent.
+
 **La journée est vivante.** Une barre situe l'heure courante parmi tes cours,
 le cours en cours est mis en avant, et le suivant affiche un compte à rebours
 qui se met à jour tout seul. Les séances qui débordent sur plusieurs jours —
