@@ -148,6 +148,19 @@ def lire_taches(cfg):
 class ZeusError(RuntimeError):
     pass
 
+def heure_locale(s):
+    """Zeus renvoie de l'UTC suffixe 'Z' : on repasse en heure locale, sinon
+    tout le planning est decale."""
+    if not s:
+        return ""
+    try:
+        d = dt.datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    except ValueError:
+        return str(s)[11:16]
+    if d.tzinfo is not None:
+        d = d.astimezone()
+    return f"{d:%H:%M}"
+
 def http(url, data=None, token=None, timeout=20, method=None):
     req = urllib.request.Request(url, method=method or ("POST" if data else "GET"))
     req.add_header("Accept", "application/json")
@@ -208,8 +221,8 @@ def zeus_planning(cfg, jour=None):
         out.append({
             "nom": r.get("name") or "Cours",
             "type": r.get("typeName") or "",
-            "debut": (r.get("startDate") or "")[11:16],
-            "fin": (r.get("endDate") or "")[11:16],
+            "debut": heure_locale(r.get("startDate")),
+            "fin": heure_locale(r.get("endDate")),
             "salles": ", ".join(s.get("name", "") for s in (r.get("rooms") or []) if s),
             "profs": ", ".join(
                 " ".join(filter(None, (t.get("firstName"), t.get("lastName"))))
@@ -457,6 +470,21 @@ def cmd_zeus_coller(cfg, args):
         cmd_zeus_test(cfg, args)
     return 0
 
+def cmd_zeus_groupe(cfg, args):
+    """Enregistre le ou les groupes a suivre, puis verifie."""
+    ids = []
+    for x in args.ids:
+        try:
+            ids.append(int(x))
+        except ValueError:
+            print(f"  [KO ] '{x}' n'est pas un identifiant de groupe")
+            return 1
+    cfg.setdefault("zeus", {})["groupes"] = ids
+    CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+    os.chmod(CONFIG_PATH, 0o600)
+    print(f"  [OK ] groupe(s) enregistre(s) : {ids}\n")
+    return cmd_zeus_test(cfg, args)
+
 def cmd_doctor(cfg, args):
     ok = True
     def chk(label, cond, extra=""):
@@ -490,11 +518,12 @@ def main():
     sub.add_parser("render"); sub.add_parser("show")
     p = sub.add_parser("zeus-groupes"); p.add_argument("--filtre")
     sub.add_parser("zeus-test"); sub.add_parser("zeus-coller")
+    p = sub.add_parser("zeus-groupe"); p.add_argument("ids", nargs="+")
     sub.add_parser("doctor")
     args = ap.parse_args()
     cfg = load_config()
     return {"render": cmd_render, "show": cmd_show, "zeus-groupes": cmd_zeus_groupes,
-            "zeus-test": cmd_zeus_test, "zeus-coller": cmd_zeus_coller,
+            "zeus-test": cmd_zeus_test, "zeus-coller": cmd_zeus_coller, "zeus-groupe": cmd_zeus_groupe,
             "doctor": cmd_doctor,
             }[args.cmd or "show"](cfg, args)
 
