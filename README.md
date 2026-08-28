@@ -93,11 +93,22 @@ quand il est valable, puis l'enregistre en restreignant la config à ton seul
 compte (`chmod 600`). `brief-matin doctor` te prévient quand il approche de
 l'expiration : il suffit de refaire la manip.
 
-Une fois l'accès en place, retrouve l'identifiant de ton groupe :
+Une fois l'accès en place, retrouve l'identifiant de ton groupe et enregistre-le :
 
 ```bash
-brief-matin zeus-groupes --filtre "ton-groupe"
-brief-matin zeus-test
+brief-matin zeus-groupes --filtre cyber
+brief-matin zeus-groupe 641
+```
+
+`zeus-groupe` enregistre et vérifie dans la foulée.
+
+**Choisis ton sous-groupe, pas la promo.** Interroger un groupe parent renvoie
+l'union des séances de tous ses sous-groupes : tu récupérerais les TD des autres
+groupes en plus des tiens. Le sous-groupe, lui, contient déjà les événements
+communs à toute la promo (rentrée, conférences). Dans le doute, compare :
+
+```bash
+brief-matin zeus-groupes --filtre "cyber 3"
 ```
 
 Tu peux aussi désigner ton groupe par son nom, sans connaître son id :

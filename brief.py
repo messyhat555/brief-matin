@@ -148,6 +148,27 @@ def lire_taches(cfg):
 class ZeusError(RuntimeError):
     pass
 
+TYPES_COURS = {
+    "integratedlecture": "Cours intégré",
+    "lecture": "Cours magistral",
+    "followup": "Suivi",
+    "conference": "Conférence",
+    "meeting": "Réunion",
+    "exam": "Examen",
+    "tutorial": "TD",
+    "practicalwork": "TP",
+    "project": "Projet",
+    "other": "",
+}
+
+def libelle_type(v):
+    """Zeus renvoie des noms d'enumeration ("CourseType.Exam") : on les rend
+    lisibles, sans masquer une valeur inconnue."""
+    brut = str(v or "").split(".")[-1].strip()
+    if not brut:
+        return ""
+    return TYPES_COURS.get(brut.lower(), brut)
+
 def heure_locale(s):
     """Zeus renvoie de l'UTC suffixe 'Z' : on repasse en heure locale, sinon
     tout le planning est decale."""
@@ -220,7 +241,7 @@ def zeus_planning(cfg, jour=None):
     for r in data:
         out.append({
             "nom": r.get("name") or "Cours",
-            "type": r.get("typeName") or "",
+            "type": libelle_type(r.get("typeName")),
             "debut": heure_locale(r.get("startDate")),
             "fin": heure_locale(r.get("endDate")),
             "salles": ", ".join(s.get("name", "") for s in (r.get("rooms") or []) if s),
@@ -317,7 +338,7 @@ h2:first-of-type {{ margin-top:0; }}
         P.append('<div class="vide">Aucun cours prévu.</div>')
     else:
         for c in planning:
-            lieu = "en ligne" if c["en_ligne"] else (c["salles"] or "salle ?")
+            lieu = "en ligne" if c["en_ligne"] else c["salles"]
             meta = " · ".join(x for x in (c["type"], lieu, c["profs"]) if x)
             P.append(f'''<div class="card"><div class="cours">
 <span class="h">{e(c["debut"])}–{e(c["fin"])}</span>
