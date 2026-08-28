@@ -76,16 +76,21 @@ ensure_path "$BIN"
 
 "$REPO/build_app.sh" /Applications >/dev/null && say "application $APP"
 
-HEURE="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("heure_matin") or "07:30")' "$BASE/config.json")"
-H="${HEURE%%:*}"; M="${HEURE##*:}"
-mkdir -p "$HOME/Library/LaunchAgents"
-sed -e "s|__APP__|$APP|g" -e "s|__BASE__|$BASE|g" \
-    -e "s|__H__|$((10#$H))|g" -e "s|__M__|$((10#$M))|g" \
-    "$REPO/agent.plist.template" > "$PLIST"
-plutil -lint "$PLIST" >/dev/null
-launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
-say "réveil      chaque jour ouvré à $HEURE"
+# --- agents launchd (macOS) ------------------------------------------------
+if [ "$(uname)" = "Darwin" ]; then
+  cp "$REPO/plists.py" "$BASE/plists.py"
+  python3 "$BASE/plists.py" "$BIN" >/dev/null
+  for L in com.briefmatin.agent com.briefmatin.veille; do
+    plutil -lint "$HOME/Library/LaunchAgents/$L.plist" >/dev/null
+    launchctl bootout "gui/$(id -u)/$L" 2>/dev/null || true
+    launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$L.plist"
+  done
+  python3 "$BASE/plists.py" "$BIN" >/dev/null
+else
+  say "agents      launchd ignoré (hors macOS) — utilise cron :"
+  say "            0 9 * * *   open -a '$APP'"
+  say "            */3 * * * * $BIN/brief-matin veille"
+fi
 
 echo
 "$BIN/brief-matin" doctor || true

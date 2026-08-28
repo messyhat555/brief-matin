@@ -15,5 +15,7 @@
     "groupe_nom": null,
     "groupe_parent": null
   },
-  "heure_matin": "07:30"
+  "heure_matin": "09:00",
+  "jours_matin": "tous",
+  "veille_secondes": 180
 }

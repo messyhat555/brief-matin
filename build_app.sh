@@ -61,5 +61,11 @@ if command -v iconutil >/dev/null && ls "$ICONSET"/*.png >/dev/null 2>&1; then
   iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns" 2>/dev/null || true
 fi
 
+# signature ad-hoc : sans elle macOS refuse les notifications a l'app
+codesign --force --deep --sign - "$APP" 2>/dev/null || \
+  echo "  (signature impossible — les notifications risquent d'être bloquées)"
+LSREG="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+[ -x "$LSREG" ] && "$LSREG" -f "$APP" 2>/dev/null
+
 touch "$APP"
-echo "Compilé : $APP"
+echo "Compilé et signé : $APP"

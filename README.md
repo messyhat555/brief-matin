@@ -17,9 +17,10 @@ cd brief-matin
 ./install.sh
 ```
 
-L'installeur détecte le vault Obsidian, compile `Brief Matin.app` dans
-`/Applications`, installe la commande `brief-matin` et programme l'ouverture
-automatique chaque jour ouvré. Il se termine par un diagnostic.
+L'installeur détecte le vault Obsidian, compile et signe `Brief Matin.app` dans
+`/Applications`, installe la commande `brief-matin` et met en place deux agents :
+l'ouverture automatique de la fenêtre, et la veille des nouveaux devoirs. Il se
+termine par un diagnostic.
 
 Cliquer sur l'icône rafraîchit et affiche le brief. ⌘R rafraîchit à la volée.
 
@@ -47,12 +48,47 @@ le cours en cours est mis en avant, et le suivant affiche un compte à rebours
 qui se met à jour tout seul. Les séances qui débordent sur plusieurs jours —
 semaines de rattrapage, stages — sont ramenées à la journée affichée.
 
+## Notifications de nouveaux devoirs
+
+Un agent relit le vault toutes les trois minutes, et immédiatement à chaque
+écriture dans les dossiers de tâches. Quand un devoir apparaît qu'il n'avait
+jamais vu, il l'annonce :
+
+> **Nouveau devoir** · Droit constitutionnel
+> Préparer une fiche sur le contrôle de conventionnalité — à rendre le 12/09
+
+Au-delà de trois d'un coup, il regroupe en une seule notification. Le premier
+passage se contente d'enregistrer l'existant, sans rien annoncer.
+
+Les empreintes déjà vues ne sont **jamais** oubliées avant six mois : une note
+lue pendant sa sauvegarde, un devoir coché puis décoché, un dossier
+temporairement déplacé ne déclenchent pas de fausse alerte.
+
+macOS demande l'autorisation d'envoyer des notifications au premier lancement de
+la fenêtre. Si elle est refusée, l'agent retombe sur `osascript` — la
+notification arrive quand même, simplement attribuée au Script Editor. Pour
+l'accorder après coup : Réglages Système → Notifications → Brief Matin.
+
+## Quand la fenêtre s'ouvre
+
+Tous les jours à 9 h, réglable dans la config :
+
+```json
+"heure_matin": "09:00",
+"jours_matin": "tous"
+```
+
+`jours_matin` accepte `"tous"`, `"semaine"` (lundi–vendredi) ou une liste
+d'indices launchd (`0` = dimanche). Relance `./install.sh` après modification.
+
 En ligne de commande :
 
 ```bash
 brief-matin show      # régénère et ouvre la fenêtre
 brief-matin render    # régénère seulement le HTML
 brief-matin doctor    # diagnostic
+brief-matin veille    # cherche les nouveaux devoirs maintenant
+brief-matin veille --rejouer   # oublie l'historique et re-annonce
 brief-matin cocher --fichier <note.md> --ligne 42   # cocher sans la fenêtre
 ```
 

@@ -3,6 +3,7 @@
 
 import Cocoa
 import WebKit
+import UserNotifications
 
 let base = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".local/share/brief-matin")
@@ -45,6 +46,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+
+        // c'est ici, fenetre au premier plan, que macOS peut poser la question
+        // des notifications ; le mode --notifier la trouvera deja repondue
+        UNUserNotificationCenter.current()
+            .requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
         refresh()
     }
@@ -101,6 +107,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool {
         return true
     }
+}
+
+// --- mode notification : pas de fenetre, on poste et on sort ---------------
+// Usage : BriefMatin --notifier "titre" "sous-titre" "corps"
+let args = CommandLine.arguments
+if args.count >= 3, args[1] == "--notifier" {
+    let titre = args[2]
+    let sousTitre = args.count > 3 ? args[3] : ""
+    let corps = args.count > 4 ? args[4] : ""
+
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+
+    let centre = UNUserNotificationCenter.current()
+    var fini = false
+    var souci: String? = nil
+
+    centre.requestAuthorization(options: [.alert, .sound]) { accorde, err in
+        if let err = err {
+            souci = "ERREUR autorisation : \(err.localizedDescription)"
+            fini = true; return
+        }
+        guard accorde else {
+            souci = "ERREUR notifications refusées pour Brief Matin"
+            fini = true; return
+        }
+        let contenu = UNMutableNotificationContent()
+        contenu.title = titre
+        if !sousTitre.isEmpty { contenu.subtitle = sousTitre }
+        contenu.body = corps
+        contenu.sound = .default
+        let requete = UNNotificationRequest(identifier: UUID().uuidString,
+                                            content: contenu, trigger: nil)
+        centre.add(requete) { err in
+            if let err = err { souci = "ERREUR envoi : \(err.localizedDescription)" }
+            fini = true
+        }
+    }
+
+    let limite = Date().addingTimeInterval(10)
+    while !fini && Date() < limite {
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+    }
+    if let souci = souci { print(souci); exit(1) }
+    if !fini { print("ERREUR délai dépassé"); exit(1) }
+    // laisse le temps au systeme de prendre la notification
+    RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.4))
+    exit(0)
 }
 
 let app = NSApplication.shared

@@ -10,7 +10,7 @@ dans une petite fenetre, tous les matins.
   doctor        verifie l'installation
 """
 
-import argparse, datetime as dt, hashlib, html, json, os, re, subprocess, sys
+import argparse, datetime as dt, fcntl, hashlib, html, json, os, re, subprocess, sys
 import unicodedata
 import urllib.error
 import urllib.request
@@ -20,6 +20,8 @@ HOME = Path.home()
 BASE = HOME / ".local/share/brief-matin"
 CONFIG_PATH = BASE / "config.json"
 OUT_HTML = BASE / "brief.html"
+TACHES_VUES = BASE / "taches_connues.json"
+VERROU = BASE / "veille.lock"
 APP = "/Applications/Brief Matin.app"
 
 JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
@@ -1103,6 +1105,111 @@ def build(cfg):
                         encoding="utf-8")
     return planning, err, devoirs, revisions
 
+def empreinte(t):
+    """Identifie une tache independamment de sa position dans le fichier."""
+    return hashlib.sha256(
+        (str(t.get("fichier", "")) + "|" + t["texte"]).encode()).hexdigest()[:16]
+
+def notifier(titre, sous_titre, corps):
+    """Affiche une notification macOS. On passe par l'app pour qu'elle soit
+    attribuee a Brief Matin ; sinon on retombe sur osascript."""
+    binaire = Path(APP) / "Contents/MacOS/BriefMatin"
+    if binaire.exists():
+        try:
+            r = subprocess.run([str(binaire), "--notifier", titre, sous_titre, corps],
+                               capture_output=True, text=True, timeout=15)
+            if r.returncode == 0 and "ERREUR" not in r.stdout:
+                return True
+            log(f"notification via l'app impossible : {r.stdout.strip() or r.stderr.strip()}",
+                "WARN")
+        except (OSError, subprocess.SubprocessError) as ex:
+            log(f"notification via l'app impossible : {ex}", "WARN")
+    def ap(x):
+        """Echappe pour une chaine AppleScript."""
+        return str(x or "").replace("\\", "\\\\").replace('"', '\\"')
+    script = (f'display notification "{ap(corps)}" with title "{ap(titre)}"'
+              + (f' subtitle "{ap(sous_titre)}"' if sous_titre else ""))
+    try:
+        subprocess.run(["osascript", "-e", script], capture_output=True, timeout=15)
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+def cmd_veille(cfg, args):
+    """Repere les devoirs apparus depuis le dernier passage et les annonce.
+
+    L'agent se declenche a l'ecriture d'une note *et* toutes les trois minutes :
+    sans verrou, deux passages simultanes se marchent dessus et annoncent deux
+    fois le meme devoir."""
+    BASE.mkdir(parents=True, exist_ok=True)
+    verrou = open(VERROU, "w")
+    try:
+        fcntl.flock(verrou, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("  un autre passage est en cours")
+        return 0
+    if args.rejouer:
+        TACHES_VUES.unlink(missing_ok=True)
+    devoirs, _ = lire_taches(cfg)
+    actuels = {empreinte(d): d for d in devoirs}
+
+    # On memorise TOUT ce qu'on a deja vu, pas seulement ce qui existe
+    # aujourd'hui : si une note est lue pendant sa sauvegarde, ou si un devoir
+    # est coche puis decoche, on ne veut pas le re-annoncer.
+    vues = {}
+    premier = True
+    try:
+        brut = json.loads(TACHES_VUES.read_text())
+        vues = ({k: str(v) for k, v in brut.items()} if isinstance(brut, dict)
+                else {k: "" for k in brut})
+        premier = False
+    except (OSError, ValueError):
+        pass
+
+    auj = dt.date.today()
+    def enregistrer():
+        garde = {}
+        for k, v in vues.items():
+            try:
+                if (auj - dt.date.fromisoformat(v)).days > 180:
+                    continue          # on oublie au bout de six mois
+            except ValueError:
+                pass
+            garde[k] = v
+        for k in actuels:
+            garde[k] = auj.isoformat()
+        tmp = TACHES_VUES.with_suffix(".tmp")
+        tmp.write_text(json.dumps(garde, ensure_ascii=False))
+        os.replace(tmp, TACHES_VUES)
+
+    if premier:
+        enregistrer()
+        print(f"  premier passage — {len(actuels)} devoir(s) enregistré(s), "
+              "aucune notification")
+        return 0
+
+    nouveaux = [d for k, d in actuels.items() if k not in vues]
+    enregistrer()
+    if not nouveaux:
+        print("  aucun nouveau devoir")
+        return 0
+
+    if len(nouveaux) > 3:
+        mats = sorted({d["matiere"] for d in nouveaux})
+        notifier(f"{len(nouveaux)} nouveaux devoirs", ", ".join(mats),
+                 " · ".join(d["texte"][:60] for d in nouveaux[:3]) + "…")
+    else:
+        for d in nouveaux:
+            quand = ""
+            if d["echeance"]:
+                _, lbl = urgence(d["echeance"], dt.date.today())
+                quand = f" — à rendre {lbl} ({d['echeance']:%d/%m})"
+            notifier("Nouveau devoir", d["matiere"], d["texte"] + quand)
+    print(f"  {len(nouveaux)} nouveau(x) devoir(s) annoncé(s)")
+    for d in nouveaux:
+        print(f"     [{d['matiere']}] {d['texte'][:60]}")
+    return 0
+
 def cmd_render(cfg, args):
     planning, err, devoirs, revisions = build(cfg)
     print(f"{OUT_HTML}  ({len(planning)} cours, {len(devoirs)} devoirs, "
@@ -1285,7 +1392,18 @@ def cmd_doctor(cfg, args):
     chk("groupe Zeus configuré", bool(z.get("groupes") or z.get("groupe_nom")))
     chk("application installée", Path(APP).exists(), APP)
     plist = HOME / "Library/LaunchAgents/com.briefmatin.agent.plist"
-    chk("réveil du matin installé", plist.exists())
+    heure = cfg.get("heure_matin", "09:00")
+    jours = cfg.get("jours_matin", "tous")
+    chk("ouverture automatique", plist.exists(),
+        f"{'tous les jours' if jours == 'tous' else jours} à {heure}")
+    veille = HOME / "Library/LaunchAgents/com.briefmatin.veille.plist"
+    detail = ""
+    try:
+        n = len(json.loads(TACHES_VUES.read_text()))
+        detail = f"{n} devoir(s) connus"
+    except (OSError, ValueError):
+        detail = "pas encore amorcée"
+    chk("veille des nouveaux devoirs", veille.exists(), detail)
     print()
     return 0 if ok else 1
 
@@ -1300,12 +1418,15 @@ def main():
     p.add_argument("--fichier", required=True)
     p.add_argument("--ligne", type=int, required=True)
     p.add_argument("--etat", choices=("fait", "afaire"), default="fait")
+    p = sub.add_parser("veille")
+    p.add_argument("--rejouer", action="store_true",
+                   help="oublie les devoirs connus et re-annonce")
     sub.add_parser("doctor")
     args = ap.parse_args()
     cfg = load_config()
     return {"render": cmd_render, "show": cmd_show, "zeus-groupes": cmd_zeus_groupes,
             "zeus-test": cmd_zeus_test, "zeus-coller": cmd_zeus_coller, "zeus-groupe": cmd_zeus_groupe,
-            "cocher": cmd_cocher, "doctor": cmd_doctor,
+            "cocher": cmd_cocher, "veille": cmd_veille, "doctor": cmd_doctor,
             }[args.cmd or "show"](cfg, args)
 
 if __name__ == "__main__":
