@@ -8,6 +8,31 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 APP="/Applications/Brief Matin.app"
 
 say() { printf '  %s\n' "$*"; }
+
+# Le PATH de l'installeur n'est pas celui du shell de connexion : on teste dans
+# un shell vierge, sinon la commande reste introuvable dans un vrai terminal.
+ensure_path() {
+  bin="$1"
+  if env -i HOME="$HOME" "${SHELL:-/bin/zsh}" -lc 'echo $PATH' 2>/dev/null \
+       | tr ':' '\n' | grep -qx "$bin"; then
+    say "PATH        $bin déjà accessible"
+    return 0
+  fi
+  case "${SHELL:-/bin/zsh}" in
+    *bash) prof="$HOME/.bash_profile" ;;
+    *)     prof="${ZDOTDIR:-$HOME}/.zprofile" ;;
+  esac
+  if grep -qF "$bin:\$PATH" "$prof" 2>/dev/null; then
+    say "PATH        déjà déclaré dans $prof"
+  else
+    {
+      printf '\n# rend accessibles les commandes installées dans %s\n' "$bin"
+      printf 'export PATH="%s:$PATH"\n' "$bin"
+    } >> "$prof"
+    say "PATH        $bin ajouté à $prof — ouvre un nouveau terminal"
+  fi
+}
+
 echo; echo "brief-matin — installation"; echo
 
 command -v python3 >/dev/null || { echo "python3 requis." >&2; exit 1; }
@@ -47,6 +72,7 @@ exec python3 "$HOME/.local/share/brief-matin/brief.py" "$@"
 WRAP
 chmod +x "$BIN/brief-matin"
 say "commande    $BIN/brief-matin"
+ensure_path "$BIN"
 
 "$REPO/build_app.sh" /Applications >/dev/null && say "application $APP"
 
