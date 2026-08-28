@@ -392,6 +392,71 @@ def cmd_zeus_test(cfg, args):
         return 1
     return 0
 
+# --------------------------------------------------------------------------
+# recuperation du jeton depuis le presse-papiers
+# --------------------------------------------------------------------------
+
+def decode_jwt(tok):
+    """Lit la charge utile d'un JWT sans verifier la signature."""
+    import base64
+    parts = tok.split(".")
+    if len(parts) != 3:
+        raise ValueError("ce n'est pas un JWT (il faut trois parties séparées par des points)")
+    seg = parts[1] + "=" * (-len(parts[1]) % 4)
+    return json.loads(base64.urlsafe_b64decode(seg))
+
+def expiration(tok):
+    try:
+        exp = decode_jwt(tok).get("exp")
+        return dt.datetime.fromtimestamp(int(exp)) if exp else None
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return None
+
+def cmd_zeus_coller(cfg, args):
+    """Prend le jeton dans le presse-papiers et l'enregistre dans la config."""
+    try:
+        brut = subprocess.run(["pbpaste"], capture_output=True, text=True,
+                              timeout=10).stdout
+    except (OSError, subprocess.SubprocessError) as ex:
+        print(f"  [KO ] presse-papiers illisible : {ex}")
+        return 1
+    tok = brut.strip().strip('"').strip("'").strip()
+    if not tok:
+        print("  [KO ] le presse-papiers est vide.")
+        print("        Refais la manip dans la console du navigateur.")
+        return 1
+    try:
+        charge = decode_jwt(tok)
+    except (ValueError, json.JSONDecodeError) as ex:
+        print(f"  [KO ] {ex}")
+        print(f"        Le presse-papiers contient autre chose "
+              f"({len(tok)} caractères).")
+        return 1
+
+    exp = expiration(tok)
+    cfg.setdefault("zeus", {})["token"] = tok
+    CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+    os.chmod(CONFIG_PATH, 0o600)   # la config contient desormais un secret
+
+    print(f"  [OK ] jeton enregistré ({len(tok)} caractères)")
+    nom = charge.get("name") or charge.get("unique_name") or charge.get("sub")
+    if nom:
+        print(f"        compte : {nom}")
+    if exp:
+        reste = exp - dt.datetime.now()
+        jours, heures = reste.days, reste.seconds // 3600
+        etat = "EXPIRÉ" if reste.total_seconds() < 0 else f"encore {jours} j {heures} h"
+        print(f"        valable jusqu'au {exp:%d/%m/%Y à %H:%M} ({etat})")
+    print(f"        config protégée en lecture seule pour toi ({CONFIG_PATH})")
+
+    if not (cfg.get("zeus") or {}).get("groupes") and not (cfg.get("zeus") or {}).get("groupe_nom"):
+        print("\n  Il reste à choisir ton groupe :")
+        print("     brief-matin zeus-groupes --filtre <ta classe>")
+    else:
+        print()
+        cmd_zeus_test(cfg, args)
+    return 0
+
 def cmd_doctor(cfg, args):
     ok = True
     def chk(label, cond, extra=""):
@@ -403,8 +468,15 @@ def cmd_doctor(cfg, args):
     d, r = lire_taches(cfg)
     chk("lecture des tâches", True, f"{len(d)} devoir(s), {len(r)} révision(s)")
     z = cfg.get("zeus") or {}
-    chk("accès Zeus configuré", bool(z.get("app_id") or z.get("token")),
-        "app_id" if z.get("app_id") else ("token" if z.get("token") else "aucun"))
+    detail = "app_id" if z.get("app_id") else ("token" if z.get("token") else "aucun")
+    if z.get("token"):
+        exp = expiration(z["token"])
+        if exp:
+            reste = exp - dt.datetime.now()
+            detail = (f"token EXPIRÉ le {exp:%d/%m à %H:%M} — refais zeus-coller"
+                      if reste.total_seconds() < 0
+                      else f"token valable encore {reste.days} j {reste.seconds//3600} h")
+    chk("accès Zeus configuré", bool(z.get("app_id") or z.get("token")), detail)
     chk("groupe Zeus configuré", bool(z.get("groupes") or z.get("groupe_nom")))
     chk("application installée", Path(APP).exists(), APP)
     plist = HOME / "Library/LaunchAgents/com.briefmatin.agent.plist"
@@ -417,11 +489,13 @@ def main():
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("render"); sub.add_parser("show")
     p = sub.add_parser("zeus-groupes"); p.add_argument("--filtre")
-    sub.add_parser("zeus-test"); sub.add_parser("doctor")
+    sub.add_parser("zeus-test"); sub.add_parser("zeus-coller")
+    sub.add_parser("doctor")
     args = ap.parse_args()
     cfg = load_config()
     return {"render": cmd_render, "show": cmd_show, "zeus-groupes": cmd_zeus_groupes,
-            "zeus-test": cmd_zeus_test, "doctor": cmd_doctor,
+            "zeus-test": cmd_zeus_test, "zeus-coller": cmd_zeus_coller,
+            "doctor": cmd_doctor,
             }[args.cmd or "show"](cfg, args)
 
 if __name__ == "__main__":

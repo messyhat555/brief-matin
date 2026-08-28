@@ -72,12 +72,26 @@ demande un jeton neuf à chaque ouverture.
 ```
 
 **Un JWT copié depuis ta session** — fonctionne tout de suite, mais expire.
-Connecte-toi à Zeus dans ton navigateur, ouvre les outils de développement,
-onglet *Application* → *Local Storage*, et copie la valeur du jeton :
 
-```json
-"zeus": { "token": "eyJhbGciOi...", "groupes": [1234] }
+Le front de Zeus range son jeton dans `localStorage`, sous la clé `AUTH`. Le
+plus simple est de passer par le presse-papiers, pour que le jeton n'ait jamais
+à transiter ailleurs : connecte-toi à Zeus, ouvre la console du navigateur
+(⌥⌘I, onglet *Console*), colle ceci puis Entrée —
+
+```js
+copy(Object.entries(localStorage).map(([k, v]) => { try { const o = JSON.parse(v); return o && o.token } catch (e) { return /^eyJ[\w-]+\.[\w-]+\./.test(v) && v } }).find(Boolean))
 ```
+
+puis, dans un terminal :
+
+```bash
+brief-matin zeus-coller
+```
+
+La commande valide le jeton, affiche à quel compte il appartient et jusqu'à
+quand il est valable, puis l'enregistre en restreignant la config à ton seul
+compte (`chmod 600`). `brief-matin doctor` te prévient quand il approche de
+l'expiration : il suffit de refaire la manip.
 
 Une fois l'accès en place, retrouve l'identifiant de ton groupe :
 
