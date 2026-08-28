@@ -645,6 +645,10 @@ JS = r"""<script>
 
   /* --- le temps qui passe --------------------------------------------- */
   const cours = donnees.cours.map(c => ({...c, d:new Date(c.debut), f:new Date(c.fin)}));
+  // heure de reference imposee (captures, tests) : on decale l'horloge
+  const decalage = donnees.maintenant
+    ? new Date(donnees.maintenant).getTime() - Date.now() : 0;
+  const horloge = () => new Date(Date.now() + decalage);
 
   function humain(ms) {
     const min = Math.round(ms / 60000);
@@ -654,7 +658,7 @@ JS = r"""<script>
   }
 
   function tic() {
-    const now = new Date();
+    const now = horloge();
     let encours = null, suivant = null;
     for (const c of cours) {
       if (c.d <= now && now <= c.f) encours = c;
@@ -721,7 +725,7 @@ JS = r"""<script>
     const idx = donnees.focus.indexOf(c);
     let quand = c.quand || "";
     if (c.genre === "cours" && c.debut) {
-      const d = new Date(c.debut), f = new Date(c.fin), now = new Date();
+      const d = new Date(c.debut), f = new Date(c.fin), now = horloge();
       quand = (d <= now && now <= f) ? "jusqu'à " + f.toTimeString().slice(0, 5)
                                      : "à " + d.toTimeString().slice(0, 5) + " · " + humain(d - now);
     }
@@ -760,6 +764,12 @@ JS = r"""<script>
   function echapper(t) {
     const d = document.createElement("div"); d.textContent = t ?? ""; return d.innerHTML;
   }
+
+  // #semaine ou #focus dans l'adresse ouvre directement la bonne vue.
+  // Place ici et pas plus haut : dessineFocus() a besoin des variables
+  // declarees au-dessus, sinon on tombe dans leur zone morte.
+  const ancre = (location.hash || "").replace("#", "");
+  if (["jour", "semaine", "focus"].includes(ancre)) montrer(ancre);
 
   tic();
   setInterval(tic, 20000);
@@ -930,8 +940,10 @@ def candidats_focus(planning, devoirs, revisions, maintenant):
     return out
 
 
-def render_html(cfg, planning, planning_err, devoirs, revisions, semaines=None):
-    maintenant = dt.datetime.now()
+def render_html(cfg, planning, planning_err, devoirs, revisions, semaines=None,
+                maintenant=None):
+    reference_imposee = maintenant is not None
+    maintenant = maintenant or dt.datetime.now()
     a = maintenant.date()
     P = ['<!doctype html><html lang="fr"><head><meta charset="utf-8">',
          "<title>Brief du matin</title><style>", CSS,
@@ -1134,6 +1146,7 @@ def render_html(cfg, planning, planning_err, devoirs, revisions, semaines=None):
 
     donnees = {
         "revisions": len(revisions),
+        "maintenant": maintenant.isoformat() if reference_imposee else None,
         "focus": candidats_focus(planning, devoirs, revisions, maintenant),
         "nb_semaines": len(sems),
         "arc": cfg.pop("_arc", None),
