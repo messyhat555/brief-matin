@@ -10,7 +10,8 @@ dans une petite fenetre, tous les matins.
   doctor        verifie l'installation
 """
 
-import argparse, datetime as dt, html, json, os, re, subprocess, sys, unicodedata
+import argparse, datetime as dt, hashlib, html, json, os, re, subprocess, sys
+import unicodedata
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -71,7 +72,8 @@ DATE_TXT = re.compile(
     r"(\d{1,2})(?:er)?(?:\s+(" + "|".join(sans_accents(m) for m in MOIS) + r"))?\b",
     re.I)
 DATE_JOUR = re.compile(
-    r"\b(?:pour|avant|d'ici)\s+(?:le\s+)?(" + "|".join(JOURS) + r")\b", re.I)
+    r"\b(?:pour|avant|d'ici|le|la|du|de)\s+(" + "|".join(JOURS) + r")\b", re.I)
+SEMAINE_PRO = re.compile(r"semaine\s+(?:prochaine|pro)\b", re.I)
 DATE_ISO = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
 def echeance(texte, ref):
@@ -84,11 +86,6 @@ def echeance(texte, ref):
             return dt.date.fromisoformat(m.group(1))
         except ValueError:
             pass
-    m = DATE_JOUR.search(plat)
-    if m:
-        cible = JOURS.index(m.group(1).lower())
-        delta = (cible - ref.weekday()) % 7 or 7
-        return ref + dt.timedelta(days=delta)
     m = DATE_TXT.search(plat)
     if m:
         jour = int(m.group(1))
@@ -102,6 +99,12 @@ def echeance(texte, ref):
             d = dt.date(annee + (mois == 12), mois % 12 + 1, jour) if not m.group(2) \
                 else dt.date(annee + 1, mois, jour)
         return d
+    m = DATE_JOUR.search(plat)
+    if m:
+        cible = JOURS.index(m.group(1).lower())
+        return ref + dt.timedelta(days=(cible - ref.weekday()) % 7 or 7)
+    if SEMAINE_PRO.search(plat):               # -> le lundi qui vient
+        return ref + dt.timedelta(days=(0 - ref.weekday()) % 7 or 7)
     return None
 
 def lire_taches(cfg):
@@ -169,18 +172,20 @@ def libelle_type(v):
         return ""
     return TYPES_COURS.get(brut.lower(), brut)
 
-def heure_locale(s):
+def moment_local(s):
     """Zeus renvoie de l'UTC suffixe 'Z' : on repasse en heure locale, sinon
     tout le planning est decale."""
     if not s:
-        return ""
+        return None
     try:
         d = dt.datetime.fromisoformat(str(s).replace("Z", "+00:00"))
     except ValueError:
-        return str(s)[11:16]
-    if d.tzinfo is not None:
-        d = d.astimezone()
-    return f"{d:%H:%M}"
+        return None
+    return (d.astimezone() if d.tzinfo is not None else d).replace(tzinfo=None)
+
+def heure_locale(s):
+    d = moment_local(s)
+    return f"{d:%H:%M}" if d else str(s or "")[11:16]
 
 def http(url, data=None, token=None, timeout=20, method=None):
     req = urllib.request.Request(url, method=method or ("POST" if data else "GET"))
@@ -244,6 +249,8 @@ def zeus_planning(cfg, jour=None):
             "type": libelle_type(r.get("typeName")),
             "debut": heure_locale(r.get("startDate")),
             "fin": heure_locale(r.get("endDate")),
+            "debut_dt": moment_local(r.get("startDate")),
+            "fin_dt": moment_local(r.get("endDate")),
             "salles": ", ".join(s.get("name", "") for s in (r.get("rooms") or []) if s),
             "profs": ", ".join(
                 " ".join(filter(None, (t.get("firstName"), t.get("lastName"))))
@@ -274,96 +281,224 @@ def urgence(d, aujourdhui):
         return "semaine", f"dans {delta} j"
     return "loin", d.strftime("%d/%m")
 
+CSS = """
+:root {
+  --bg:#f7f6f3; --fg:#17161a; --fg2:#4a4750; --muted:#8c8792;
+  --line:#e7e4de; --card:#fffefc; --ombre:0 1px 2px rgba(20,18,25,.05);
+  --accent:#6b4dff; --accent-doux:#efeaff;
+  --rouge:#c0392b; --rouge-doux:#fdeceb; --orange:#a86a1e; --orange-doux:#fbf1e2;
+  --sat:58%; --lum:42%;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#131217; --fg:#f2f1ee; --fg2:#c3c0c9; --muted:#8b8694;
+    --line:#28262f; --card:#1c1b21; --ombre:none;
+    --accent:#a996ff; --accent-doux:#241f3a;
+    --rouge:#ff9384; --rouge-doux:#2e1c1c; --orange:#e5b167; --orange-doux:#2b2317;
+    --sat:52%; --lum:70%;
+  }
+}
+* { box-sizing:border-box; }
+html { -webkit-font-smoothing:antialiased; }
+body {
+  margin:0; background:var(--bg); color:var(--fg);
+  font:14.5px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
+  padding:26px 22px 34px;
+}
+.jour { font-size:12px; text-transform:uppercase; letter-spacing:.1em;
+  color:var(--muted); font-weight:600; }
+h1 { font-size:26px; line-height:1.15; margin:3px 0 8px; letter-spacing:-.5px; }
+.apercu { color:var(--fg2); font-size:13.5px; margin-bottom:26px; }
+.apercu b { color:var(--fg); font-weight:600; }
+h2 { font-size:11px; text-transform:uppercase; letter-spacing:.1em;
+  color:var(--muted); margin:0 0 11px; font-weight:600;
+  display:flex; align-items:center; gap:8px; }
+h2::after { content:""; flex:1; height:1px; background:var(--line); }
+section { margin-bottom:26px; }
+.creneau { display:grid; grid-template-columns:52px 1fr; gap:13px; }
+.creneau + .creneau { margin-top:4px; }
+.rail { text-align:right; padding-top:11px; }
+.rail .h { font-size:13px; font-weight:650; font-variant-numeric:tabular-nums;
+  color:var(--fg); display:block; }
+.rail .f { font-size:11.5px; color:var(--muted); font-variant-numeric:tabular-nums; }
+.bloc { background:var(--card); border:1px solid var(--line); border-radius:11px;
+  padding:11px 13px; box-shadow:var(--ombre);
+  border-left:3px solid hsl(var(--h) var(--sat) var(--lum)); }
+.bloc .nom { font-weight:620; letter-spacing:-.1px; }
+.bloc .meta { color:var(--muted); font-size:12.5px; margin-top:2px; }
+.creneau.encours .bloc { background:var(--accent-doux); border-color:transparent;
+  border-left-color:var(--accent); }
+.etiq { display:block; font-size:10px; font-weight:700; letter-spacing:.07em;
+  text-transform:uppercase; color:var(--accent); margin-bottom:3px; }
+.battement { grid-column:2; color:var(--muted); font-size:11.5px;
+  padding:5px 0 5px 13px; border-left:1px dashed var(--line); }
+.groupe { margin-bottom:14px; }
+.groupe-titre { font-size:11.5px; font-weight:650; margin-bottom:6px; color:var(--fg2); }
+.groupe.retard .groupe-titre { color:var(--rouge); }
+.groupe.bientot .groupe-titre { color:var(--orange); }
+.tache { display:grid; grid-template-columns:15px 1fr; gap:10px;
+  background:var(--card); border:1px solid var(--line); border-radius:10px;
+  padding:10px 12px; margin-bottom:5px; box-shadow:var(--ombre); }
+.groupe.retard .tache { background:var(--rouge-doux); border-color:transparent; }
+.groupe.bientot .tache { background:var(--orange-doux); border-color:transparent; }
+.case { width:14px; height:14px; border:1.5px solid var(--muted); border-radius:4px;
+  margin-top:3px; opacity:.55; }
+.txt { font-size:13.5px; color:var(--fg); }
+.bas { display:flex; align-items:center; gap:7px; margin-top:5px; flex-wrap:wrap; }
+.matiere { font-size:11px; color:var(--fg2); display:inline-flex; align-items:center;
+  gap:5px; font-weight:550; }
+.pastille { width:7px; height:7px; border-radius:50%;
+  background:hsl(var(--h) var(--sat) var(--lum)); flex:0 0 auto; }
+.quand { font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; }
+.rev { display:flex; gap:9px; padding:7px 2px; font-size:13px; color:var(--fg2);
+  border-bottom:1px solid var(--line); align-items:flex-start; }
+.rev:last-child { border-bottom:none; }
+.rev .pastille { margin-top:6px; }
+.vide { color:var(--muted); font-size:13px; padding:11px 13px; background:var(--card);
+  border:1px dashed var(--line); border-radius:10px; }
+.alerte { background:var(--orange-doux); color:var(--orange); border-radius:10px;
+  padding:10px 13px; font-size:12.5px; margin-bottom:20px; }
+.alerte b { font-weight:650; }
+.pied { margin-top:28px; padding-top:12px; border-top:1px solid var(--line);
+  color:var(--muted); font-size:11px; display:flex; justify-content:space-between; }
+"""
+
+def teinte(nom):
+    """Une couleur stable par matiere, pour la reconnaitre d'un coup d'oeil."""
+    return int(hashlib.md5(sans_accents(nom).encode()).hexdigest()[:6], 16) % 360
+
+def duree_humaine(minutes):
+    h, m = divmod(int(minutes), 60)
+    if h and m:
+        return f"{h} h {m:02d}"
+    return f"{h} h" if h else f"{m} min"
+
+def salutation(maintenant):
+    h = maintenant.hour
+    if h < 12:
+        return "Bonne matinée"
+    if h < 18:
+        return "Bon après-midi"
+    return "Bonne soirée"
+
+# libelle, classe css, test sur le nombre de jours restants
+BUCKETS = [
+    ("retard",  "En retard",     lambda d: d is not None and d < 0),
+    ("bientot", "Aujourd'hui",   lambda d: d == 0),
+    ("bientot", "Demain",        lambda d: d == 1),
+    ("",        "Cette semaine", lambda d: d is not None and 2 <= d <= 7),
+    ("",        "Plus tard",     lambda d: d is not None and d > 7),
+    ("",        "Sans échéance", lambda d: d is None),
+]
+
 def render_html(cfg, planning, planning_err, devoirs, revisions):
-    a = dt.date.today()
-    n_urgents = sum(1 for d in devoirs
-                    if d["echeance"] and (d["echeance"] - a).days <= 1)
-    P = []
-    P.append(f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
-<title>Brief du matin</title><style>
-:root {{
-  --bg:#faf9f7; --fg:#1c1b19; --muted:#77726b; --line:#e6e2dc; --card:#ffffff;
-  --accent:#7c5cff; --rouge:#c0392b; --orange:#c07a2b; --vert:#2b7a4b;
-}}
-@media (prefers-color-scheme: dark) {{
-  :root {{ --bg:#17161a; --fg:#ecebe8; --muted:#9b958d; --line:#2c2a30;
-           --card:#1f1e23; --accent:#a08cff; --rouge:#ff8a7a; --orange:#e0a960;
-           --vert:#7fd3a0; }}
-}}
-* {{ box-sizing:border-box; }}
-body {{ margin:0; background:var(--bg); color:var(--fg); font:14px/1.5
-  -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif; padding:22px 20px 28px; }}
-h1 {{ font-size:20px; margin:0 0 2px; letter-spacing:-.2px; }}
-.sub {{ color:var(--muted); font-size:13px; margin-bottom:20px; }}
-h2 {{ font-size:11px; text-transform:uppercase; letter-spacing:.09em;
-  color:var(--muted); margin:24px 0 9px; font-weight:600; }}
-h2:first-of-type {{ margin-top:0; }}
-.card {{ background:var(--card); border:1px solid var(--line); border-radius:10px;
-  padding:11px 13px; margin-bottom:7px; }}
-.cours {{ display:flex; gap:12px; align-items:baseline; }}
-.h {{ font-variant-numeric:tabular-nums; font-weight:600; white-space:nowrap;
-  color:var(--accent); }}
-.nom {{ font-weight:600; }}
-.meta {{ color:var(--muted); font-size:12px; margin-top:2px; }}
-.tache {{ display:flex; gap:9px; align-items:flex-start; }}
-.puce {{ width:13px; height:13px; border:1.5px solid var(--muted); border-radius:4px;
-  flex:0 0 auto; margin-top:3px; }}
-.mat {{ font-size:11px; color:var(--muted); text-transform:uppercase;
-  letter-spacing:.05em; margin-top:3px; }}
-.tag {{ font-size:11px; padding:1px 7px; border-radius:20px; white-space:nowrap;
-  border:1px solid currentColor; }}
-.retard,.auj {{ color:var(--rouge); }} .demain,.semaine {{ color:var(--orange); }}
-.loin {{ color:var(--muted); }}
-.vide {{ color:var(--muted); font-style:italic; padding:6px 2px; }}
-.err {{ border-color:var(--orange); }} .err .meta {{ color:var(--orange); }}
-.pied {{ margin-top:26px; color:var(--muted); font-size:11px;
-  border-top:1px solid var(--line); padding-top:11px; }}
-</style></head><body>""")
+    maintenant = dt.datetime.now()
+    a = maintenant.date()
+    P = ['<!doctype html><html lang="fr"><head><meta charset="utf-8">',
+         "<title>Brief du matin</title><style>", CSS, "</style></head><body>"]
 
-    P.append(f"<h1>{e(date_fr(a).capitalize())}</h1>")
-    resume = []
+    prenom = (cfg.get("prenom") or "").strip()
+    P.append('<div class="jour">' + e(date_fr(a)) + "</div>")
+    P.append("<h1>" + e(salutation(maintenant))
+             + ((" " + e(prenom)) if prenom else "") + "</h1>")
+
+    suivant = next((c for c in planning
+                    if c.get("debut_dt") and c["debut_dt"] > maintenant), None)
+    encours = next((c for c in planning
+                    if c.get("debut_dt") and c.get("fin_dt")
+                    and c["debut_dt"] <= maintenant <= c["fin_dt"]), None)
+    bouts = []
     if planning:
-        resume.append(f"{len(planning)} cours")
-    if n_urgents:
-        resume.append(f"{n_urgents} à rendre sous 24 h")
+        bouts.append("<b>" + str(len(planning)) + "</b> cours")
+    if encours:
+        bouts.append(e(encours["nom"]) + " <b>en ce moment</b>")
+    elif suivant:
+        bouts.append("prochain à <b>" + e(suivant["debut"]) + "</b>")
+    urgents = [d for d in devoirs if d["echeance"] and (d["echeance"] - a).days <= 1]
+    if urgents:
+        bouts.append("<b>" + str(len(urgents)) + "</b> à rendre sous 24 h")
     elif devoirs:
-        resume.append(f"{len(devoirs)} devoir{'s' if len(devoirs) > 1 else ''}")
-    P.append(f'<div class="sub">{e(" · ".join(resume) or "rien de prévu")}</div>')
+        bouts.append("<b>" + str(len(devoirs)) + "</b> devoirs en cours")
+    P.append('<div class="apercu">'
+             + (" · ".join(bouts) or "Rien de prévu aujourd’hui.") + "</div>")
 
-    P.append("<h2>Aujourd'hui</h2>")
+    z = cfg.get("zeus") or {}
+    if z.get("token"):
+        exp = expiration(z["token"])
+        if exp:
+            reste = (exp - maintenant).total_seconds() / 3600
+            if reste < 0:
+                P.append('<div class="alerte"><b>Accès Zeus expiré.</b> Recopie ton '
+                         "jeton, puis <code>brief-matin zeus-coller</code>.</div>")
+            elif reste < 6:
+                P.append('<div class="alerte"><b>Accès Zeus bientôt expiré</b> ('
+                         + str(int(reste)) + " h). Pense à recopier ton jeton.</div>")
+
+    P.append('<section><h2>La journée</h2>')
     if planning_err:
-        P.append(f'<div class="card err"><div class="nom">Planning indisponible</div>'
-                 f'<div class="meta">{e(planning_err)}</div></div>')
+        P.append('<div class="vide">Planning indisponible — ' + e(planning_err) + "</div>")
     elif not planning:
-        P.append('<div class="vide">Aucun cours prévu.</div>')
+        P.append('<div class="vide">Aucun cours prévu. Journée libre.</div>')
     else:
+        precedent = None
         for c in planning:
+            if precedent and precedent.get("fin_dt") and c.get("debut_dt"):
+                creux = (c["debut_dt"] - precedent["fin_dt"]).total_seconds() / 60
+                if creux >= 45:
+                    P.append('<div class="creneau"><div></div><div class="battement">'
+                             + e(duree_humaine(creux)) + " de battement</div></div>")
+            classe = "creneau encours" if c is encours else "creneau"
             lieu = "en ligne" if c["en_ligne"] else c["salles"]
             meta = " · ".join(x for x in (c["type"], lieu, c["profs"]) if x)
-            P.append(f'''<div class="card"><div class="cours">
-<span class="h">{e(c["debut"])}–{e(c["fin"])}</span>
-<span><span class="nom">{e(c["nom"])}</span>
-<div class="meta">{e(meta)}</div></span></div></div>''')
+            etiq = ""
+            if c is encours:
+                etiq = '<span class="etiq">en ce moment</span>'
+            elif c is suivant:
+                etiq = '<span class="etiq">prochain</span>'
+            P.append('<div class="' + classe + '" style="--h:' + str(teinte(c["nom"]))
+                     + '"><div class="rail"><span class="h">' + e(c["debut"])
+                     + '</span><span class="f">' + e(c["fin"])
+                     + '</span></div><div class="bloc">' + etiq
+                     + '<div class="nom">' + e(c["nom"]) + "</div>"
+                     + ('<div class="meta">' + e(meta) + "</div>" if meta else "")
+                     + "</div></div>")
+            precedent = c
+    P.append("</section>")
 
-    P.append("<h2>À rendre</h2>")
+    P.append('<section><h2>À rendre</h2>')
     if not devoirs:
-        P.append('<div class="vide">Rien à rendre.</div>')
-    for d in devoirs[: cfg.get("max_devoirs", 12)]:
-        cls, lbl = urgence(d["echeance"], a)
-        tag = f'<span class="tag {cls}">{e(lbl)}</span>' if lbl else ""
-        P.append(f'''<div class="card"><div class="tache"><span class="puce"></span>
-<span style="flex:1">{e(d["texte"])}<div class="mat">{e(d["matiere"])}</div></span>
-{tag}</div></div>''')
+        P.append('<div class="vide">Rien à rendre. Profites-en.</div>')
+    else:
+        restants = devoirs[: cfg.get("max_devoirs", 12)]
+        for classe, titre, test in BUCKETS:
+            lot = [d for d in restants
+                   if test(None if d["echeance"] is None else (d["echeance"] - a).days)]
+            if not lot:
+                continue
+            P.append('<div class="groupe ' + classe + '"><div class="groupe-titre">'
+                     + e(titre) + " · " + str(len(lot)) + "</div>")
+            for d in lot:
+                _, lbl = urgence(d["echeance"], a)
+                quand = ('<span class="quand">' + e(lbl) + "</span>") if lbl else ""
+                P.append('<div class="tache" style="--h:' + str(teinte(d["matiere"]))
+                         + '"><div class="case"></div><div><div class="txt">'
+                         + e(d["texte"]) + '</div><div class="bas">'
+                         + '<span class="matiere"><span class="pastille"></span>'
+                         + e(d["matiere"]) + "</span>" + quand + "</div></div></div>")
+            P.append("</div>")
+    P.append("</section>")
 
     if revisions:
-        P.append("<h2>À réviser</h2>")
+        P.append('<section><h2>À réviser</h2>')
         for r in revisions[: cfg.get("max_revisions", 6)]:
-            P.append(f'''<div class="card"><div class="tache"><span class="puce"></span>
-<span style="flex:1">{e(r["texte"])}<div class="mat">{e(r["matiere"])}</div></span>
-</div></div>''')
+            P.append('<div class="rev" style="--h:' + str(teinte(r["matiere"]))
+                     + '"><span class="pastille"></span><span>' + e(r["texte"])
+                     + "</span></div>")
+        P.append("</section>")
 
-    P.append(f'<div class="pied">Généré à {dt.datetime.now():%H:%M} · '
-             f'{e(len(devoirs))} devoir(s), {e(len(revisions))} point(s) de révision</div>')
+    P.append('<div class="pied"><span>' + str(len(devoirs)) + " devoir(s) · "
+             + str(len(revisions)) + " à réviser</span><span>"
+             + f"{maintenant:%H:%M}" + "</span></div>")
     P.append("</body></html>")
     return "\n".join(P)
 

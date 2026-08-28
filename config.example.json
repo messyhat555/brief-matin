@@ -1,6 +1,10 @@
 {
   "vault": null,
-  "dossiers_taches": ["10 Cours", "00 Inbox"],
+  "prenom": null,
+  "dossiers_taches": [
+    "10 Cours",
+    "00 Inbox"
+  ],
   "max_devoirs": 12,
   "max_revisions": 6,
   "zeus": {

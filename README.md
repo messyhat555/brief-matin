@@ -47,7 +47,8 @@ Les échéances sont devinées dans le texte de la tâche :
 | Écrit dans la note | Compris comme |
 | --- | --- |
 | `à rendre le 12` | le 12 du mois courant, ou du suivant s'il est passé |
-| `pour jeudi` | le prochain jeudi |
+| `pour le TP de jeudi`, `avant mardi` | la prochaine occurrence de ce jour |
+| `pour la semaine prochaine` | le lundi qui vient |
 | `2026-09-12` | cette date |
 
 Sans indice, la tâche est affichée sans étiquette plutôt qu'avec une date
@@ -128,6 +129,7 @@ ne dépendent de rien d'autre que du vault.
 | Clé | Rôle |
 | --- | --- |
 | `vault` | chemin du vault, détecté à l'installation |
+| `prenom` | prénom affiché dans la salutation (facultatif) |
 | `dossiers_taches` | dossiers où chercher les cases à cocher |
 | `max_devoirs`, `max_revisions` | nombre de lignes affichées |
 | `zeus` | accès et groupe (voir ci-dessus) |
