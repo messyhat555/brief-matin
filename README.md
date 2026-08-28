@@ -43,8 +43,8 @@ dans la note Obsidian d'où il vient. C'est la vue montrée en haut de cette pag
 ### La semaine
 
 L'emploi du temps en grille, une couleur par matière, la colonne du jour
-soulignée et une ligne qui suit l'heure. Les flèches passent à la semaine
-suivante.
+soulignée et une ligne qui suit l'heure. Les flèches parcourent **sept
+semaines** : celle qui vient de passer, celle en cours, et les cinq suivantes.
 
 <p align="center">
   <img src="captures/semaine.png" width="420" alt="Vue de la semaine en grille horaire">

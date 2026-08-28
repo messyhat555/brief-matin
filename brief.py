@@ -266,6 +266,26 @@ def zeus_reservations(cfg, d0, d1, tok=None):
         raise ZeusError("Aucun groupe configuré — renseigne zeus.groupes ou zeus.groupe_nom")
     return data if isinstance(data, list) else []
 
+# Zeus refuse les plages de plus d'un mois ("Dates interval is not valid") :
+# on decoupe en tranches de quatre semaines.
+TRANCHE_JOURS = 28
+
+def zeus_periode(cfg, d0, d1, tok=None):
+    """Recupere une longue periode en enchainant des appels acceptes."""
+    tok = tok or zeus_token(cfg)
+    vues, out = set(), []
+    debut = d0
+    while debut <= d1:
+        fin = min(debut + dt.timedelta(days=TRANCHE_JOURS - 1), d1)
+        for r in zeus_reservations(cfg, debut, fin, tok):
+            cle = r.get("idReservation")
+            if cle in vues:
+                continue          # une seance a cheval sort dans deux tranches
+            vues.add(cle)
+            out.append(r)
+        debut = fin + dt.timedelta(days=1)
+    return out
+
 def mise_en_forme(data, jour):
     """Ramene les reservations a une journee donnee.
 
@@ -521,6 +541,7 @@ section { margin-bottom:28px; }
   user-select:none; transition:color .15s, border-color .15s, transform .12s; }
 .fleche:hover { color:var(--accent); border-color:var(--accent); }
 .fleche:active { transform:scale(.94); }
+.fleche.inerte { opacity:.28; pointer-events:none; }
 .bande { display:flex; gap:6px; align-items:center;
   background:linear-gradient(to bottom, var(--card), var(--card2));
   border:1px solid var(--line);
@@ -700,14 +721,23 @@ JS = r"""<script>
   });
 
   /* --- semaine precedente / suivante ----------------------------------- */
-  let sem = 0;
+  let sem = donnees.semaine_depart || 0;
+  function majFleches() {
+    const n = donnees.nb_semaines;
+    document.querySelectorAll(".bloc-sem:not([hidden]) .fleche").forEach(f => {
+      const pas = parseInt(f.dataset.pas, 10);
+      f.classList.toggle("inerte", sem + pas < 0 || sem + pas > n - 1);
+    });
+  }
   document.querySelectorAll(".fleche").forEach(f =>
     f.addEventListener("click", () => {
       const n = donnees.nb_semaines;
       sem = Math.min(Math.max(sem + parseInt(f.dataset.pas, 10), 0), n - 1);
       document.querySelectorAll(".bloc-sem").forEach(b =>
         b.hidden = parseInt(b.dataset.sem, 10) !== sem);
+      majFleches();
     }));
+  majFleches();
 
   /* --- focus : une seule chose ----------------------------------------- */
   let iFocus = 0;
@@ -1127,9 +1157,11 @@ def render_html(cfg, planning, planning_err, devoirs, revisions, semaines=None,
     if not sems:
         P.append('<div class="sem-vide">Semaine indisponible — accès Zeus non '
                  "configuré." + BOUTON_ZEUS + "</div>")
+    lundi_courant = maintenant.date() - dt.timedelta(days=maintenant.weekday())
+    depart = next((i for i, l in enumerate(sorted(sems)) if l == lundi_courant), 0)
     for idx, (lundi, jours_map) in enumerate(sorted(sems.items())):
         P.append('<div class="bloc-sem" data-sem="' + str(idx) + '"'
-                 + ("" if idx == 0 else " hidden") + '>')
+                 + ("" if idx == depart else " hidden") + '>')
         fin = lundi + dt.timedelta(days=6)
         titre = ("Semaine du " + str(lundi.day) + " " + MOIS[lundi.month - 1]
                  if lundi.month == fin.month else
@@ -1149,6 +1181,7 @@ def render_html(cfg, planning, planning_err, devoirs, revisions, semaines=None,
         "maintenant": maintenant.isoformat() if reference_imposee else None,
         "focus": candidats_focus(planning, devoirs, revisions, maintenant),
         "nb_semaines": len(sems),
+        "semaine_depart": depart if sems else 0,
         "arc": cfg.pop("_arc", None),
         "cours": [{"id": c.get("id", i), "nom": c["nom"],
                    "debut": c["debut_dt"].isoformat() if c.get("debut_dt") else None,
@@ -1173,10 +1206,14 @@ def build(cfg):
         # un seul appel couvre le jour, la semaine en cours et la suivante
         auj = dt.date.today()
         lundi = auj - dt.timedelta(days=auj.weekday())
-        data = zeus_reservations(cfg, lundi, lundi + dt.timedelta(days=13))
+        avant = max(int(cfg.get("semaines_avant", 1)), 0)
+        apres = max(int(cfg.get("semaines_apres", 5)), 0)
+        premier = lundi - dt.timedelta(weeks=avant)
+        dernier = lundi + dt.timedelta(weeks=apres, days=6)
+        data = zeus_periode(cfg, premier, dernier)
         planning = mise_en_forme(data, auj)
-        for w in (0, 1):
-            l = lundi + dt.timedelta(days=7 * w)
+        for w in range(avant + apres + 1):
+            l = premier + dt.timedelta(weeks=w)
             semaines[l] = {l + dt.timedelta(days=i): mise_en_forme(
                 data, l + dt.timedelta(days=i)) for i in range(7)}
     except ZeusError as ex:

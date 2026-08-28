@@ -255,6 +255,7 @@ avec toutes ses protections, et tu ne transmets que le jeton final.
 | `dossiers_taches` | dossiers où chercher les cases à cocher |
 | `max_devoirs`, `max_revisions` | nombre de lignes affichées |
 | `zeus` | accès et groupe (voir ci-dessus) |
+| `semaines_avant`, `semaines_apres` | étendue de la vue semaine (1 et 5 par défaut) |
 | `heure_matin` | heure d'ouverture automatique, jours ouvrés |
 
 Après avoir changé `heure_matin`, relance `./install.sh` pour reprogrammer le

@@ -17,5 +17,7 @@
   },
   "heure_matin": "09:00",
   "jours_matin": "tous",
-  "veille_secondes": 180
+  "veille_secondes": 180,
+  "semaines_avant": 1,
+  "semaines_apres": 5
 }
