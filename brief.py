@@ -11,7 +11,7 @@ dans une petite fenetre, tous les matins.
 """
 
 import argparse, datetime as dt, fcntl, hashlib, html, json, os, re, subprocess, sys
-import unicodedata
+import shutil, unicodedata
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -214,6 +214,26 @@ def http(url, data=None, token=None, timeout=20, method=None):
     except json.JSONDecodeError:
         return raw
 
+MARQUE_TROUSSEAU = "@trousseau"
+
+def _trousseau(mode, entree=None):
+    binaire = Path(APP) / "Contents/MacOS/BriefMatin"
+    if not binaire.exists():
+        return None
+    try:
+        r = subprocess.run([str(binaire), mode], input=entree, capture_output=True,
+                           text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+def jeton_actuel(cfg):
+    """Le jeton Zeus, depuis le trousseau si c'est la qu'il vit."""
+    brut = (cfg.get("zeus") or {}).get("token")
+    if brut == MARQUE_TROUSSEAU:
+        return _trousseau("--keychain-get")
+    return brut
+
 def zeus_token(cfg):
     z = cfg.get("zeus") or {}
     if z.get("app_id"):
@@ -223,8 +243,9 @@ def zeus_token(cfg):
         if not tok:
             raise ZeusError("Le login par app_id n'a pas renvoyé de jeton")
         return str(tok).strip('"')
-    if z.get("token"):
-        return z["token"].strip()
+    jeton = jeton_actuel(cfg)
+    if jeton:
+        return jeton.strip()
     raise ZeusError("Aucun accès Zeus configuré — renseigne app_id ou token dans la config")
 
 def zeus_reservations(cfg, d0, d1, tok=None):
@@ -967,8 +988,9 @@ def render_html(cfg, planning, planning_err, devoirs, revisions, semaines=None):
             cfg["_arc"] = {"debut": t0.isoformat(), "fin": t1.isoformat()}
 
     z = cfg.get("zeus") or {}
-    if z.get("token"):
-        exp = expiration(z["token"])
+    jeton_vue = jeton_actuel(cfg)
+    if jeton_vue:
+        exp = expiration(jeton_vue)
         if exp:
             reste = (exp - maintenant).total_seconds() / 3600
             if reste < 0:
@@ -1060,7 +1082,7 @@ def render_html(cfg, planning, planning_err, devoirs, revisions, semaines=None):
     # etat Zeus toujours visible et toujours cliquable : se reconnecter ne doit
     # pas dependre du fait que le jeton soit deja mort
     classe, texte = "mort", "Zeus déconnecté"
-    jeton = (cfg.get("zeus") or {}).get("token")
+    jeton = jeton_actuel(cfg)
     if (cfg.get("zeus") or {}).get("app_id"):
         classe, texte = "", "Zeus · app_id"
     elif jeton:
@@ -1328,9 +1350,13 @@ def enregistrer_jeton(cfg, tok):
         charge = decode_jwt(tok)
     except (ValueError, json.JSONDecodeError) as ex:
         return False, str(ex)
-    cfg.setdefault("zeus", {})["token"] = tok
+    # le jeton part au trousseau ; la config ne garde qu'un marqueur
+    place = "trousseau" if _trousseau("--keychain-set", tok) == "" else None
+    cfg.setdefault("zeus", {})["token"] = MARQUE_TROUSSEAU if place else tok
     CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
     os.chmod(CONFIG_PATH, 0o600)
+    if not place:
+        log("trousseau indisponible — le jeton reste dans la config", "WARN")
     qui = charge.get("name") or charge.get("unique_name") or charge.get("sub") or "?"
     exp = expiration(tok)
     quand = f", valable jusqu'au {exp:%d/%m à %H:%M}" if exp else ""
@@ -1344,6 +1370,21 @@ def cmd_zeus_enregistrer(cfg, args):
     ok, msg = enregistrer_jeton(cfg, sys.stdin.read())
     print(("  [OK ] " if ok else "  [KO ] ") + msg)
     return 0 if ok else 1
+
+def cmd_zeus_deconnexion(cfg, args):
+    """Efface le jeton et la session web conservee par l'app."""
+    _trousseau("--keychain-clear")
+    if (cfg.get("zeus") or {}).get("token"):
+        cfg["zeus"]["token"] = None
+        CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+        os.chmod(CONFIG_PATH, 0o600)
+    print("  [OK ] jeton effacé du trousseau et de la config")
+    donnees = HOME / "Library/WebKit/com.briefmatin.app"
+    if donnees.is_dir():
+        shutil.rmtree(donnees, ignore_errors=True)
+        print("  [OK ] session web de l'application effacée")
+    print("  Ta session dans ton propre navigateur n'est pas touchée.")
+    return 0
 
 def cmd_zeus_connexion(cfg, args):
     """Ouvre la fenetre de connexion Zeus et attend le jeton."""
@@ -1467,15 +1508,18 @@ def cmd_doctor(cfg, args):
     d, r = lire_taches(cfg)
     chk("lecture des tâches", True, f"{len(d)} devoir(s), {len(r)} révision(s)")
     z = cfg.get("zeus") or {}
-    detail = "app_id" if z.get("app_id") else ("token" if z.get("token") else "aucun")
-    if z.get("token"):
-        exp = expiration(z["token"])
+    jd = jeton_actuel(cfg)
+    ou = " (trousseau)" if z.get("token") == MARQUE_TROUSSEAU else " (config)"
+    detail = "app_id" if z.get("app_id") else (("token" + ou) if jd else "aucun")
+    if jd:
+        exp = expiration(jd)
         if exp:
             reste = exp - dt.datetime.now()
-            detail = (f"token EXPIRÉ le {exp:%d/%m à %H:%M} — refais zeus-coller"
+            detail = (f"EXPIRÉ le {exp:%d/%m à %H:%M} — reconnecte-toi"
                       if reste.total_seconds() < 0
-                      else f"token valable encore {reste.days} j {reste.seconds//3600} h")
-    chk("accès Zeus configuré", bool(z.get("app_id") or z.get("token")), detail)
+                      else f"valable encore {reste.days} j {reste.seconds//3600} h")
+            detail = "token" + ou + " — " + detail
+    chk("accès Zeus configuré", bool(z.get("app_id") or jd), detail)
     chk("groupe Zeus configuré", bool(z.get("groupes") or z.get("groupe_nom")))
     chk("application installée", Path(APP).exists(), APP)
     plist = HOME / "Library/LaunchAgents/com.briefmatin.agent.plist"
@@ -1501,6 +1545,7 @@ def main():
     p = sub.add_parser("zeus-groupes"); p.add_argument("--filtre")
     sub.add_parser("zeus-test"); sub.add_parser("zeus-coller")
     sub.add_parser("zeus-enregistrer"); sub.add_parser("zeus-connexion")
+    sub.add_parser("zeus-deconnexion")
     p = sub.add_parser("zeus-groupe"); p.add_argument("ids", nargs="+")
     p = sub.add_parser("cocher")
     p.add_argument("--fichier", required=True)
@@ -1514,7 +1559,8 @@ def main():
     cfg = load_config()
     return {"render": cmd_render, "show": cmd_show, "zeus-groupes": cmd_zeus_groupes,
             "zeus-test": cmd_zeus_test, "zeus-coller": cmd_zeus_coller, "zeus-enregistrer": cmd_zeus_enregistrer,
-            "zeus-connexion": cmd_zeus_connexion, "zeus-groupe": cmd_zeus_groupe,
+            "zeus-connexion": cmd_zeus_connexion,
+            "zeus-deconnexion": cmd_zeus_deconnexion, "zeus-groupe": cmd_zeus_groupe,
             "cocher": cmd_cocher, "veille": cmd_veille, "doctor": cmd_doctor,
             }[args.cmd or "show"](cfg, args)
 

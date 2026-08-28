@@ -4,11 +4,49 @@
 import Cocoa
 import WebKit
 import UserNotifications
+import Security
 
 let base = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".local/share/brief-matin")
 let htmlURL = base.appendingPathComponent("brief.html")
 let script  = base.appendingPathComponent("brief.py")
+
+// --- trousseau ------------------------------------------------------------
+// Le jeton vit dans le trousseau plutot qu'en clair dans un fichier : l'element
+// y est chiffre au repos et rattache a cette application.
+enum Trousseau {
+    static let service = "com.briefmatin.zeus"
+    static let compte = "token"
+
+    static func ecrire(_ valeur: String) -> Bool {
+        let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                   kSecAttrService as String: service,
+                                   kSecAttrAccount as String: compte]
+        SecItemDelete(base as CFDictionary)
+        var ajout = base
+        ajout[kSecValueData as String] = valeur.data(using: .utf8)!
+        ajout[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+        return SecItemAdd(ajout as CFDictionary, nil) == errSecSuccess
+    }
+
+    static func lire() -> String? {
+        let req: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                  kSecAttrService as String: service,
+                                  kSecAttrAccount as String: compte,
+                                  kSecReturnData as String: true,
+                                  kSecMatchLimit as String: kSecMatchLimitOne]
+        var sortie: CFTypeRef?
+        guard SecItemCopyMatching(req as CFDictionary, &sortie) == errSecSuccess,
+              let d = sortie as? Data else { return nil }
+        return String(data: d, encoding: .utf8)
+    }
+
+    static func effacer() {
+        SecItemDelete([kSecClass as String: kSecClassGenericPassword,
+                       kSecAttrService as String: service,
+                       kSecAttrAccount as String: compte] as CFDictionary)
+    }
+}
 
 /// Fenetre de connexion a Zeus. L'utilisateur s'y connecte normalement ;
 /// des que le site range son jeton, on le recupere et on referme.
@@ -18,6 +56,38 @@ final class ConnexionZeus: NSObject, WKNavigationDelegate, NSWindowDelegate {
     private var minuterie: Timer?
     private var fini = false
     private let termine: (String?) -> Void
+
+    /// On n'autorise que Zeus et l'authentification Microsoft. Sans barre
+    /// d'adresse, c'est le seul garde-fou contre une redirection hostile.
+    private let hotesPermis = [
+        "zeus.ionis-it.com", "ionis-it.com",
+        "login.microsoftonline.com", "login.microsoft.com", "login.live.com",
+        "aadcdn.msftauth.net", "aadcdn.msauth.net", "msftauth.net",
+        "msauth.net", "microsoftonline.com", "office.com", "office365.com",
+    ]
+
+    private func permis(_ hote: String?) -> Bool {
+        guard let h = hote?.lowercased() else { return false }
+        return hotesPermis.contains { h == $0 || h.hasSuffix("." + $0) }
+    }
+
+    func webView(_ w: WKWebView, decidePolicyFor action: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        let hote = action.request.url?.host
+        if permis(hote) {
+            decisionHandler(.allow)
+        } else {
+            decisionHandler(.cancel)
+            let ou = hote ?? "?"
+            fenetre?.title = "Navigation bloquée vers \(ou) — connexion interrompue"
+            NSLog("[BriefMatin] navigation refusee vers \(ou)")
+        }
+    }
+
+    func webView(_ w: WKWebView, didCommit navigation: WKNavigation!) {
+        // sans barre d'adresse, le titre dit ou on se trouve reellement
+        fenetre?.title = "Connexion Zeus — " + (w.url?.host ?? "?")
+    }
 
     init(termine: @escaping (String?) -> Void) {
         self.termine = termine
@@ -29,7 +99,7 @@ final class ConnexionZeus: NSObject, WKNavigationDelegate, NSWindowDelegate {
             contentRect: NSRect(x: 0, y: 0, width: 980, height: 760),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
-        fenetre.title = "Connexion à Zeus — connecte-toi, la fenêtre se ferme seule"
+        fenetre.title = "Connexion Zeus — chargement…"
         fenetre.center()
         fenetre.delegate = self
 
@@ -220,6 +290,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     // Cmd-W ferme
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool {
         return true
+    }
+}
+
+// --- modes trousseau -------------------------------------------------------
+if CommandLine.arguments.count >= 2 {
+    switch CommandLine.arguments[1] {
+    case "--keychain-set":
+        let valeur = String(data: FileHandle.standardInput.readDataToEndOfFile(),
+                            encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        exit(valeur.isEmpty || !Trousseau.ecrire(valeur) ? 1 : 0)
+    case "--keychain-get":
+        guard let v = Trousseau.lire() else { exit(1) }
+        print(v); exit(0)
+    case "--keychain-clear":
+        Trousseau.effacer(); exit(0)
+    default: break
     }
 }
 

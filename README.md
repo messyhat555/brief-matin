@@ -199,6 +199,49 @@ Si Zeus est injoignable ou le jeton expiré, la fenêtre s'affiche quand même :
 seule la section *Aujourd'hui* est remplacée par un message. Les devoirs, eux,
 ne dépendent de rien d'autre que du vault.
 
+## Sécurité
+
+L'authentification se fait dans une vue web appartenant à l'application. C'est
+commode, mais c'est un compromis assumé, et voici lequel.
+
+**Ce qui est protégé.**
+Le jeton vit dans le **trousseau macOS**, pas dans un fichier : chiffré au repos,
+rattaché à cette application. La config n'en garde qu'un marqueur. La fenêtre de
+connexion **n'autorise la navigation que vers Zeus et l'authentification
+Microsoft** — toute redirection ailleurs est refusée et affichée. Comme il n'y a
+pas de barre d'adresse, le **titre de la fenêtre affiche l'hôte réel** en
+permanence. Le jeton transite par l'entrée standard, jamais en argument de
+commande.
+
+**Ce qui reste vrai malgré tout.**
+Une application qui héberge une vue web peut en lire le contenu — c'est le
+mécanisme même de cette fonctionnalité, et c'est pourquoi les fournisseurs
+d'identité déconseillent les vues embarquées. Rien n'empêche techniquement une
+telle application de lire un mot de passe saisi dans sa vue. Celle-ci ne lit que
+`localStorage.getItem('ZEUS-AUTH')`, dans `ConnexionZeus.chercherJeton()` — une
+quinzaine de lignes, vérifiables. La confiance repose sur la lecture du code, pas
+sur une garantie du système.
+
+Par ailleurs, une vue embarquée ne bénéficie pas de l'anti-hameçonnage du
+navigateur, ni du gestionnaire de mots de passe, ni forcément des clés de
+sécurité matérielles.
+
+**Portée réelle du jeton.** Il porte `rol: VISITOR`, `groups: []`,
+`aud: zeus-app` : lecture d'emplois du temps, et rien d'autre. Ce n'est pas un
+jeton Microsoft, et il expire en 24 h.
+
+**Tout effacer**, jeton et session web de l'application comprises :
+
+```bash
+brief-matin zeus-deconnexion
+```
+
+La session de ton propre navigateur n'est pas touchée.
+
+**Si ce compromis ne te convient pas**, la voie manuelle par le presse-papiers
+n'utilise aucune vue web embarquée : tu te connectes dans ton vrai navigateur,
+avec toutes ses protections, et tu ne transmets que le jeton final.
+
 ## Configuration
 
 `~/.local/share/brief-matin/config.json` (voir `config.example.json`) :
