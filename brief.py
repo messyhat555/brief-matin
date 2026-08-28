@@ -571,7 +571,19 @@ section { margin-bottom:28px; }
   font-family:ui-serif,"New York",Georgia,serif; }
 .pied { margin-top:30px; padding-top:13px; border-top:1px solid var(--ligne-douce);
   color:var(--muted); font-size:10.5px; display:flex; justify-content:space-between;
-  letter-spacing:.03em; }
+  align-items:center; gap:10px; letter-spacing:.03em; }
+.etat-zeus { display:inline-flex; align-items:center; gap:6px; cursor:pointer;
+  padding:3px 9px; border-radius:20px; border:1px solid var(--line);
+  background:var(--card); transition:border-color .15s, color .15s, background .15s; }
+.etat-zeus:hover { border-color:var(--accent); color:var(--accent);
+  background:var(--survol); }
+.etat-zeus::before { content:""; width:6px; height:6px; border-radius:50%;
+  background:var(--vert); flex:0 0 auto; }
+.etat-zeus.bientot::before { background:var(--orange); }
+.etat-zeus.mort::before { background:var(--rouge); }
+.etat-zeus.mort { color:var(--rouge); border-color:color-mix(in srgb, var(--rouge) 35%, transparent); }
+.etat-zeus .verbe { opacity:0; margin-left:2px; transition:opacity .15s; }
+.etat-zeus:hover .verbe { opacity:1; }
 """
 
 JS = r"""<script>
@@ -1045,9 +1057,35 @@ def render_html(cfg, planning, planning_err, devoirs, revisions, semaines=None):
                      + "</span></div>")
         P.append("</section>")
 
+    # etat Zeus toujours visible et toujours cliquable : se reconnecter ne doit
+    # pas dependre du fait que le jeton soit deja mort
+    classe, texte = "mort", "Zeus déconnecté"
+    jeton = (cfg.get("zeus") or {}).get("token")
+    if (cfg.get("zeus") or {}).get("app_id"):
+        classe, texte = "", "Zeus · app_id"
+    elif jeton:
+        exp = expiration(jeton)
+        if exp is None:
+            classe, texte = "", "Zeus connecté"
+        else:
+            h = (exp - maintenant).total_seconds() / 3600
+            if h < 0:
+                classe, texte = "mort", "Zeus expiré"
+            elif h < 1:
+                classe, texte = "bientot", f"Zeus · {max(int(h * 60), 1)} min"
+            elif h < 6:
+                classe, texte = "bientot", f"Zeus · {round(h)} h"
+            elif h < 48:
+                classe, texte = "", f"Zeus · {round(h)} h"
+            else:
+                classe, texte = "", f"Zeus · {round(h / 24)} j"
+
     P.append('<div class="pied"><span>' + str(len(devoirs)) + " devoir(s) · "
-             + str(len(revisions)) + " à réviser</span><span>"
-             + f"{maintenant:%H:%M}" + "</span></div>")
+             + str(len(revisions)) + " à réviser</span>"
+             + '<span class="etat-zeus ' + classe + '" data-connecter title='
+             + '"Se reconnecter à Zeus">' + e(texte)
+             + '<span class="verbe">· reconnecter</span></span>'
+             + "<span>" + f"{maintenant:%H:%M}" + "</span></div>")
     P.append("</div>")   # fin de la vue Jour
 
     P.append('<div class="vue" id="v-semaine">')

@@ -137,9 +137,13 @@ demande un jeton neuf à chaque ouverture.
 
 **Se connecter depuis l'app** — le plus simple, et le seul geste à retenir.
 
-Quand le jeton manque ou expire, un bouton **« Se connecter à Zeus »** apparaît
-dans la fenêtre, à l'endroit où le planning aurait dû être. Un clic ouvre une
-fenêtre de connexion : tu t'y connectes normalement, et dès que Zeus range son
+En bas de la fenêtre, une pastille indique en permanence l'état de l'accès —
+`Zeus · 23 h`, `Zeus · 40 min` en orange, `Zeus expiré` en rouge. **Elle est
+cliquable à tout moment**, même quand tout va bien. Quand le jeton manque ou
+approche de l'expiration, un bouton **« Se connecter à Zeus »** apparaît en plus
+là où le planning aurait dû être.
+
+Un clic ouvre une fenêtre de connexion : tu t'y connectes normalement, et dès que Zeus range son
 jeton, l'app le récupère, l'enregistre et referme la fenêtre toute seule.
 
 Disponible aussi à tout moment par le menu (**⌘L**) ou en ligne de commande :
