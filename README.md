@@ -135,15 +135,30 @@ demande un jeton neuf à chaque ouverture.
 "zeus": { "app_id": "ton-app-id", "groupes": [1234] }
 ```
 
-**Un JWT copié depuis ta session** — fonctionne tout de suite, mais expire.
+**Se connecter depuis l'app** — le plus simple, et le seul geste à retenir.
 
-Le front de Zeus range son jeton dans `localStorage`, sous la clé `AUTH`. Le
-plus simple est de passer par le presse-papiers, pour que le jeton n'ait jamais
-à transiter ailleurs : connecte-toi à Zeus, ouvre la console du navigateur
-(⌥⌘I, onglet *Console*), colle ceci puis Entrée —
+Quand le jeton manque ou expire, un bouton **« Se connecter à Zeus »** apparaît
+dans la fenêtre, à l'endroit où le planning aurait dû être. Un clic ouvre une
+fenêtre de connexion : tu t'y connectes normalement, et dès que Zeus range son
+jeton, l'app le récupère, l'enregistre et referme la fenêtre toute seule.
+
+Disponible aussi à tout moment par le menu (**⌘L**) ou en ligne de commande :
+
+```bash
+brief-matin zeus-connexion
+```
+
+La connexion se fait dans une vue web appartenant à l'app, qui ne lit donc que
+son propre stockage — aucun accès à ton navigateur. La session y est persistante :
+les fois suivantes, la fenêtre se referme souvent sans que tu aies à retaper quoi
+que ce soit.
+
+**Coller un jeton à la main** — si la fenêtre de connexion est refusée par le
+fournisseur d'identité, la voie manuelle reste disponible. Connecte-toi à Zeus
+dans ton navigateur, ouvre la console (⌥⌘I), et colle :
 
 ```js
-copy(Object.entries(localStorage).map(([k, v]) => { try { const o = JSON.parse(v); return o && o.token } catch (e) { return /^eyJ[\w-]+\.[\w-]+\./.test(v) && v } }).find(Boolean))
+copy(JSON.parse(localStorage.getItem("ZEUS-AUTH")).token)
 ```
 
 puis, dans un terminal :
@@ -151,11 +166,6 @@ puis, dans un terminal :
 ```bash
 brief-matin zeus-coller
 ```
-
-La commande valide le jeton, affiche à quel compte il appartient et jusqu'à
-quand il est valable, puis l'enregistre en restreignant la config à ton seul
-compte (`chmod 600`). `brief-matin doctor` te prévient quand il approche de
-l'expiration : il suffit de refaire la manip.
 
 Une fois l'accès en place, retrouve l'identifiant de ton groupe et enregistre-le :
 

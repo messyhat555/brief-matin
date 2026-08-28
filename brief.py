@@ -487,6 +487,9 @@ section { margin-bottom:28px; }
   padding:11px 14px; font-size:12.5px; margin-bottom:20px;
   border:1px solid color-mix(in srgb, var(--orange) 22%, transparent); }
 .alerte b { font-weight:670; }
+.zeus-actions { margin-top:11px; }
+.bouton.petit { font-size:12px; padding:7px 14px; display:inline-block; }
+.sem-vide .zeus-actions, .vide .zeus-actions { margin-top:13px; }
 
 /* ---- vue semaine ---- */
 .sem-tete { display:flex; align-items:center; justify-content:space-between;
@@ -734,6 +737,10 @@ JS = r"""<script>
 # teinte tiree au hasard sur 360 donnait des voisinages criards
 TEINTES = [222, 168, 38, 340, 272, 146, 198, 14]
 
+BOUTON_ZEUS = ('<div class="zeus-actions">'
+               '<span class="bouton fort petit" data-connecter>Se connecter à Zeus</span>'
+               "</div>")
+
 def teinte(nom):
     """Une couleur stable par matiere, pour la reconnaitre d'un coup d'oeil."""
     h = int(hashlib.md5(sans_accents(nom).encode()).hexdigest()[:6], 16)
@@ -953,11 +960,12 @@ def render_html(cfg, planning, planning_err, devoirs, revisions, semaines=None):
         if exp:
             reste = (exp - maintenant).total_seconds() / 3600
             if reste < 0:
-                P.append('<div class="alerte"><b>Accès Zeus expiré.</b> Recopie ton '
-                         "jeton, puis <code>brief-matin zeus-coller</code>.</div>")
+                P.append('<div class="alerte"><b>Accès Zeus expiré.</b> '
+                         "Reconnecte-toi pour retrouver ton planning."
+                         + BOUTON_ZEUS + "</div>")
             elif reste < 6:
                 P.append('<div class="alerte"><b>Accès Zeus bientôt expiré</b> ('
-                         + str(int(reste)) + " h). Pense à recopier ton jeton.</div>")
+                         + str(int(reste)) + " h)." + BOUTON_ZEUS + "</div>")
 
     P.append('<div class="onglets">'
              '<div class="onglet actif" data-vue="jour">Jour<span class="cle">1</span></div>'
@@ -967,7 +975,8 @@ def render_html(cfg, planning, planning_err, devoirs, revisions, semaines=None):
     P.append('<div class="vue active" id="v-jour">')
     P.append('<section><h2>La journée</h2>')
     if planning_err:
-        P.append('<div class="vide">Planning indisponible — ' + e(planning_err) + "</div>")
+        P.append('<div class="vide">Planning indisponible — ' + e(planning_err)
+                 + BOUTON_ZEUS + "</div>")
     elif not planning:
         P.append('<div class="vide">Aucun cours prévu. Journée libre.</div>')
     else:
@@ -1044,8 +1053,8 @@ def render_html(cfg, planning, planning_err, devoirs, revisions, semaines=None):
     P.append('<div class="vue" id="v-semaine">')
     sems = semaines or {}
     if not sems:
-        P.append('<div class="sem-vide">Semaine indisponible '
-                 '— accès Zeus non configuré.</div>')
+        P.append('<div class="sem-vide">Semaine indisponible — accès Zeus non '
+                 "configuré." + BOUTON_ZEUS + "</div>")
     for idx, (lundi, jours_map) in enumerate(sorted(sems.items())):
         P.append('<div class="bloc-sem" data-sem="' + str(idx) + '"'
                  + ("" if idx == 0 else " hidden") + '>')
@@ -1272,6 +1281,46 @@ def expiration(tok):
     except (ValueError, KeyError, TypeError, json.JSONDecodeError):
         return None
 
+def enregistrer_jeton(cfg, tok):
+    """Valide un JWT et l'ecrit dans la config. Renvoie (ok, message)."""
+    tok = (tok or "").strip().strip('"').strip("'")
+    if not tok:
+        return False, "jeton vide"
+    try:
+        charge = decode_jwt(tok)
+    except (ValueError, json.JSONDecodeError) as ex:
+        return False, str(ex)
+    cfg.setdefault("zeus", {})["token"] = tok
+    CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+    os.chmod(CONFIG_PATH, 0o600)
+    qui = charge.get("name") or charge.get("unique_name") or charge.get("sub") or "?"
+    exp = expiration(tok)
+    quand = f", valable jusqu'au {exp:%d/%m à %H:%M}" if exp else ""
+    return True, f"jeton enregistré pour {qui}{quand}"
+
+def cmd_zeus_enregistrer(cfg, args):
+    """Recoit le jeton sur l'entree standard.
+
+    Par l'entree standard et non en argument : un argument de ligne de commande
+    est visible de tout le systeme dans la liste des processus."""
+    ok, msg = enregistrer_jeton(cfg, sys.stdin.read())
+    print(("  [OK ] " if ok else "  [KO ] ") + msg)
+    return 0 if ok else 1
+
+def cmd_zeus_connexion(cfg, args):
+    """Ouvre la fenetre de connexion Zeus et attend le jeton."""
+    binaire = Path(APP) / "Contents/MacOS/BriefMatin"
+    if not binaire.exists():
+        print(f"  [KO ] application introuvable ({APP}) — lance ./install.sh")
+        return 1
+    print("  Une fenêtre s'ouvre : connecte-toi normalement.")
+    print("  Elle se referme seule dès que le jeton est récupéré.")
+    r = subprocess.run([str(binaire), "--connexion"], capture_output=True,
+                       text=True, timeout=360)
+    sortie = (r.stdout + r.stderr).strip()
+    print("  " + (sortie or "aucune réponse"))
+    return r.returncode
+
 def cmd_zeus_coller(cfg, args):
     """Prend le jeton dans le presse-papiers et l'enregistre dans la config."""
     try:
@@ -1413,6 +1462,7 @@ def main():
     sub.add_parser("render"); sub.add_parser("show")
     p = sub.add_parser("zeus-groupes"); p.add_argument("--filtre")
     sub.add_parser("zeus-test"); sub.add_parser("zeus-coller")
+    sub.add_parser("zeus-enregistrer"); sub.add_parser("zeus-connexion")
     p = sub.add_parser("zeus-groupe"); p.add_argument("ids", nargs="+")
     p = sub.add_parser("cocher")
     p.add_argument("--fichier", required=True)
@@ -1425,7 +1475,8 @@ def main():
     args = ap.parse_args()
     cfg = load_config()
     return {"render": cmd_render, "show": cmd_show, "zeus-groupes": cmd_zeus_groupes,
-            "zeus-test": cmd_zeus_test, "zeus-coller": cmd_zeus_coller, "zeus-groupe": cmd_zeus_groupe,
+            "zeus-test": cmd_zeus_test, "zeus-coller": cmd_zeus_coller, "zeus-enregistrer": cmd_zeus_enregistrer,
+            "zeus-connexion": cmd_zeus_connexion, "zeus-groupe": cmd_zeus_groupe,
             "cocher": cmd_cocher, "veille": cmd_veille, "doctor": cmd_doctor,
             }[args.cmd or "show"](cfg, args)
 

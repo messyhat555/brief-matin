@@ -10,12 +10,92 @@ let base = FileManager.default.homeDirectoryForCurrentUser
 let htmlURL = base.appendingPathComponent("brief.html")
 let script  = base.appendingPathComponent("brief.py")
 
+/// Fenetre de connexion a Zeus. L'utilisateur s'y connecte normalement ;
+/// des que le site range son jeton, on le recupere et on referme.
+final class ConnexionZeus: NSObject, WKNavigationDelegate, NSWindowDelegate {
+    private var fenetre: NSWindow!
+    private var web: WKWebView!
+    private var minuterie: Timer?
+    private var fini = false
+    private let termine: (String?) -> Void
+
+    init(termine: @escaping (String?) -> Void) {
+        self.termine = termine
+        super.init()
+    }
+
+    func ouvrir(url: String) {
+        fenetre = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 980, height: 760),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered, defer: false)
+        fenetre.title = "Connexion à Zeus — connecte-toi, la fenêtre se ferme seule"
+        fenetre.center()
+        fenetre.delegate = self
+
+        let cfg = WKWebViewConfiguration()
+        cfg.websiteDataStore = .default()     // la session doit persister
+        web = WKWebView(frame: fenetre.contentView!.bounds, configuration: cfg)
+        web.autoresizingMask = [.width, .height]
+        web.navigationDelegate = self
+        // certains fournisseurs d'identite refusent les vues embarquees ;
+        // on se presente comme un Safari de bureau
+        web.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            + "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+        fenetre.contentView!.addSubview(web)
+        fenetre.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+
+        web.load(URLRequest(url: URL(string: url)!))
+
+        minuterie = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            self?.chercherJeton()
+        }
+        // si rien au bout de cinq minutes, on abandonne proprement
+        Timer.scheduledTimer(withTimeInterval: 300, repeats: false) { [weak self] _ in
+            self?.conclure(nil)
+        }
+    }
+
+    private func chercherJeton() {
+        let js = """
+        (() => { const b = localStorage.getItem('ZEUS-AUTH');
+          if (!b) return null;
+          try { const o = JSON.parse(b); return (o && o.token) ? o.token : null; }
+          catch (e) { return null; } })()
+        """
+        web.evaluateJavaScript(js) { [weak self] valeur, _ in
+            if let jeton = valeur as? String, jeton.count > 40 {
+                self?.conclure(jeton)
+            }
+        }
+    }
+
+    private func conclure(_ jeton: String?) {
+        guard !fini else { return }
+        fini = true
+        minuterie?.invalidate()
+        fenetre?.close()
+        termine(jeton)
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool { conclure(nil); return true }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
                          WKScriptMessageHandler {
     var window: NSWindow!
     var web: WKWebView!
 
+    /// true quand l'app est lancee uniquement pour la connexion Zeus
+    var connexionSeule = false
+
     func applicationDidFinishLaunching(_ note: Notification) {
+        if CommandLine.arguments.contains("--connexion") {
+            connexionSeule = true
+            connecterZeus()
+            return
+        }
         let w = CGFloat(ProcessInfo.processInfo.environment["BRIEF_W"]
             .flatMap(Double.init) ?? 520)
         let h = CGFloat(ProcessInfo.processInfo.environment["BRIEF_H"]
@@ -55,11 +135,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         refresh()
     }
 
-    /// Recoit les demandes de la page (cocher un devoir).
+    var connexion: ConnexionZeus?
+
+    /// Ouvre la connexion Zeus, enregistre le jeton, puis rafraichit le brief.
+    func connecterZeus() {
+        connexion = ConnexionZeus { [weak self] jeton in
+            guard let jeton = jeton else {
+                if self?.connexionSeule == true {
+                    print("aucun jeton récupéré"); exit(1)
+                }
+                return
+            }
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            p.arguments = ["python3", script.path, "zeus-enregistrer"]
+            let entree = Pipe()
+            p.standardInput = entree
+            p.standardOutput = Pipe(); p.standardError = Pipe()
+            try? p.run()
+            entree.fileHandleForWriting.write(jeton.data(using: .utf8)!)
+            entree.fileHandleForWriting.closeFile()
+            p.waitUntilExit()
+            if self?.connexionSeule == true {
+                print("jeton récupéré et enregistré"); exit(0)
+            }
+            DispatchQueue.main.async { self?.refresh() }
+        }
+        connexion?.ouvrir(url: "https://zeus.ionis-it.com/home")
+    }
+
+    /// Recoit les demandes de la page (cocher un devoir, se connecter).
     func userContentController(_ c: WKUserContentController,
                                didReceive message: WKScriptMessage) {
-        guard let corps = message.body as? [String: Any],
-              corps["action"] as? String == "cocher",
+        guard let corps = message.body as? [String: Any] else { return }
+        if corps["action"] as? String == "connecter" {
+            DispatchQueue.main.async { self.connecterZeus() }
+            return
+        }
+        guard corps["action"] as? String == "cocher",
               let fichier = corps["fichier"] as? String,
               let ligne = corps["ligne"] as? Int, ligne > 0 else { return }
         DispatchQueue.global(qos: .userInitiated).async {
@@ -102,6 +215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     }
 
     @objc func rafraichir() { refresh() }
+    @objc func menuConnecter() { connecterZeus() }
 
     // Cmd-W ferme
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool {
@@ -168,6 +282,8 @@ menu.addItem(item)
 let sub = NSMenu()
 sub.addItem(withTitle: "Rafraîchir", action: #selector(AppDelegate.rafraichir),
             keyEquivalent: "r")
+sub.addItem(withTitle: "Se connecter à Zeus…",
+            action: #selector(AppDelegate.menuConnecter), keyEquivalent: "l")
 sub.addItem(withTitle: "Fermer", action: #selector(NSWindow.performClose(_:)),
             keyEquivalent: "w")
 sub.addItem(withTitle: "Quitter", action: #selector(NSApplication.terminate(_:)),
