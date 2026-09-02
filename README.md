@@ -83,8 +83,11 @@ on s'identifie, et c'est reparti.
 
 ## Installer
 
-Il faut un Mac — Apple Silicon ou Intel, macOS 12 ou plus récent —,
-Obsidian, et un compte dans une école IONIS.
+Il faut Obsidian, un compte dans une école IONIS, et un Mac — Apple Silicon
+ou Intel, macOS 12 ou plus récent.
+
+Sur un autre système, `brief-matin fenetre` ouvre le brief dans une fenêtre de
+navigateur avec les mêmes possibilités ; voir les [notes techniques](TECHNIQUE.md).
 
 ```bash
 git clone https://github.com/messyhat555/brief-matin.git

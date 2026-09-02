@@ -281,10 +281,25 @@ Safari 16.2 (macOS 13) ; les cinq endroits où son absence se verrait portent un
 valeur de repli déclarée juste avant. Sur macOS 12 l'application reste donc
 complète, avec quelques teintes moins nuancées.
 
-**Hors macOS**, le script Python et le pipeline fonctionnent (`render`, `veille`,
-`cocher`, `zeus-*`) ; il manque la fenêtre native, l'agent launchd et les
-notifications. Une ligne de cron et un navigateur ouvert sur `brief.html` font
-l'essentiel.
+**Hors macOS**, la fenêtre native manque — mais pas la fenêtre :
+
+```bash
+brief-matin fenetre
+```
+
+sert le brief sur `127.0.0.1` et l'ouvre dans une fenêtre sans barre d'adresse
+(mode `--app` de Chrome, Brave, Edge ou Chromium ; à défaut, l'onglet par défaut).
+La page détecte l'absence du pont natif et bascule sur cette API locale : cocher
+un devoir, en ajouter un, changer de prénom et se connecter fonctionnent à
+l'identique.
+
+Le serveur n'écoute que sur la boucle locale, exige un jeton tiré au hasard à
+chaque démarrage — passé en paramètre d'URL ou en en-tête `X-Brief-Jeton` — et
+s'arrête dès que la fenêtre se ferme. Aucun port n'est exposé au réseau.
+
+Restent propres à macOS : l'agent launchd (une ligne de cron le remplace), les
+notifications, et la fenêtre de connexion Zeus intégrée — ailleurs, le bouton
+ouvre Zeus dans le navigateur et le jeton se récupère avec `zeus-coller`.
 
 ## Désinstallation
 

@@ -21,5 +21,7 @@
   "semaines_avant": 1,
   "semaines_apres": 5,
   "prenom_demande": false,
-  "dossier_devoirs": "10 Cours"
+  "dossier_devoirs": "10 Cours",
+  "fenetre_largeur": 520,
+  "fenetre_hauteur": 860
 }

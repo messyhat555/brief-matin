@@ -11,7 +11,9 @@ dans une petite fenetre, tous les matins.
 """
 
 import argparse, datetime as dt, fcntl, hashlib, html, json, os, re, subprocess, sys
-import shutil, unicodedata
+import io, secrets, shutil, threading, time, unicodedata
+import urllib.parse, webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -673,17 +675,31 @@ section { margin-bottom:28px; }
 JS = r"""<script>
 (() => {
   const pont = window.webkit?.messageHandlers?.brief;
+  // Deux canaux possibles vers l'hote : le pont de la fenetre native, ou une
+  // petite API locale quand la page est servie dans un navigateur ordinaire.
+  const api = window.__brief_api || null;
+  const interactif = () => !!(pont || api);
+  const agir = (msg) => {
+    if (pont) { pont.postMessage(msg); return Promise.resolve(true); }
+    if (api) {
+      return fetch(api, {method: "POST", headers: {"Content-Type": "application/json"},
+                         body: JSON.stringify(msg)})
+        .then(r => r.ok).catch(() => false);
+    }
+    return Promise.resolve(false);
+  };
+  const recharger = () => setTimeout(() => location.reload(), 250);
   const donnees = JSON.parse(document.getElementById("donnees").textContent);
 
   /* --- cocher un devoir : ecrit dans la note Obsidian ------------------ */
   document.querySelectorAll(".tache[data-fichier]").forEach(el => {
     el.addEventListener("click", () => {
       if (el.classList.contains("faite")) return;
-      if (!pont) { el.animate([{transform:"translateX(0)"},{transform:"translateX(-5px)"},
+      if (!interactif()) { el.animate([{transform:"translateX(0)"},{transform:"translateX(-5px)"},
         {transform:"translateX(5px)"},{transform:"translateX(0)"}], {duration:220}); return; }
       el.classList.add("faite");
-      pont.postMessage({action:"cocher", fichier:el.dataset.fichier,
-                        ligne:parseInt(el.dataset.ligne, 10)});
+      agir({action:"cocher", fichier:el.dataset.fichier,
+            ligne:parseInt(el.dataset.ligne, 10)});
       setTimeout(() => {
         const g = el.closest(".groupe");
         el.remove();
@@ -758,9 +774,9 @@ JS = r"""<script>
     const envoyer = (efface) => {
       const saisi = (champ.value || "").trim();
       voile.hidden = true;
-      if (!pont) return;
+      if (!interactif()) return;
       if (!efface && !saisi) { champ.value = nomActuel; return; }
-      pont.postMessage({action: "prenom", valeur: efface ? "" : saisi});
+      agir({action: "prenom", valeur: efface ? "" : saisi}).then(ok => { if (ok && api) recharger(); });
     };
     const titre = document.querySelector("[data-changer-prenom]");
     if (titre) {
@@ -801,10 +817,9 @@ JS = r"""<script>
     const valider = () => {
       const t = (texte.value || "").trim();
       if (!t) { texte.focus(); return; }
-      if (!pont) { texte.value = "Disponible seulement dans l'app"; return; }
-      pont.postMessage({action: "devoir", texte: t,
-                        matiere: (matiere.value || "").trim(),
-                        echeance: date.value || ""});
+      if (!interactif()) { texte.value = "Disponible seulement dans l'app"; return; }
+      agir({action: "devoir", texte: t, matiere: (matiere.value || "").trim(),
+            echeance: date.value || ""}).then(ok => { if (ok && api) recharger(); });
       texte.value = ""; montrerForm(false);
     };
     form.querySelector("[data-valider-ajout]").addEventListener("click", valider);
@@ -817,10 +832,10 @@ JS = r"""<script>
     b.addEventListener("click", ev => {
       ev.preventDefault();
       ev.stopPropagation();
-      if (!pont) { b.textContent = "Disponible seulement dans l'app"; return; }
+      if (!interactif()) { b.textContent = "Disponible seulement dans l'app"; return; }
       const avant = b.innerHTML;
       b.textContent = "Ouverture de la connexion…";
-      pont.postMessage({action: "connecter"});
+      agir({action: "connecter"});
       setTimeout(() => { b.innerHTML = avant; }, 6000);
     });
   });
@@ -900,8 +915,8 @@ JS = r"""<script>
     });
     const fait = document.getElementById("f-fait");
     if (fait) fait.addEventListener("click", () => {
-      if (pont && c.fichier) {
-        pont.postMessage({action: "cocher", fichier: c.fichier, ligne: c.ligne});
+      if (interactif() && c.fichier) {
+        agir({action: "cocher", fichier: c.fichier, ligne: c.ligne});
         const jumeau = document.querySelector('.tache[data-fichier="' + CSS.escape(c.fichier)
                                               + '"][data-ligne="' + c.ligne + '"]');
         if (jumeau) { jumeau.remove(); majCompteurs(); }
@@ -1553,6 +1568,165 @@ def sanitize_matiere(nom):
     nom = re.sub(r'[\\/:*?"<>|#\^\[\]]', "-", str(nom or "")).strip()
     return re.sub(r"\s+", " ", nom)[:60]
 
+# --------------------------------------------------------------------------
+# fenetre portable : un petit serveur local + un navigateur en mode fenetre
+# --------------------------------------------------------------------------
+
+NAVIGATEURS = [
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "brave-browser", "google-chrome", "chromium", "chromium-browser", "msedge",
+]
+
+def trouver_navigateur():
+    for c in NAVIGATEURS:
+        if os.path.sep in c:
+            if Path(c).exists():
+                return c
+        else:
+            chemin = shutil.which(c)
+            if chemin:
+                return chemin
+    return None
+
+def executer_action(cfg, msg):
+    """Applique une action venue de la page. Renvoie (ok, message)."""
+    action = msg.get("action")
+    if action == "cocher":
+        cible = Path(str(msg.get("fichier") or ""))
+        ligne = int(msg.get("ligne") or 0)
+        faux = argparse.Namespace(fichier=str(cible), ligne=ligne, etat="fait")
+        return cmd_cocher(cfg, faux) == 0, "coché"
+    if action == "prenom":
+        cfg["prenom"] = (str(msg.get("valeur") or "").strip() or None)
+        cfg["prenom_demande"] = True
+        CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+        os.chmod(CONFIG_PATH, 0o600)
+        return True, "prénom enregistré"
+    if action == "devoir":
+        entree = json.dumps({k: msg.get(k) for k in ("texte", "matiere", "echeance")})
+        ancien = sys.stdin
+        sys.stdin = io.StringIO(entree)
+        try:
+            ok = cmd_devoir_ajouter(cfg, None) == 0
+        finally:
+            sys.stdin = ancien
+        return ok, "devoir ajouté"
+    if action == "connecter":
+        binaire = Path(APP) / "Contents/MacOS/BriefMatin"
+        if binaire.exists():
+            subprocess.Popen([str(binaire), "--connexion"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True, "fenêtre de connexion ouverte"
+        # hors macOS : on ouvre Zeus dans le navigateur, le jeton se colle ensuite
+        webbrowser.open((cfg.get("zeus") or {}).get("base_url", "") + "/home")
+        return True, "connecte-toi puis lance : brief-matin zeus-coller"
+    return False, f"action inconnue : {action}"
+
+def servir(cfg, port=0, ouvrir=True, duree_max=None):
+    """Sert le brief en local et applique les actions de la page."""
+    jeton = secrets.token_urlsafe(24)
+    etat = {"dernier_contact": time.time()}
+
+    class Poignee(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass                                    # pas de bruit dans la console
+
+        def _autorise(self):
+            depuis = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(depuis.query)
+            entete = self.headers.get("X-Brief-Jeton")
+            if jeton in params.get("jeton", []) or entete == jeton:
+                etat["dernier_contact"] = time.time()
+                return True
+            self.send_error(403, "jeton invalide")
+            return False
+
+        def do_GET(self):
+            if not self._autorise():
+                return
+            chemin = urllib.parse.urlparse(self.path).path
+            if chemin in ("/", "/index.html"):
+                build(cfg)
+                page = OUT_HTML.read_text(encoding="utf-8")
+                injection = ('<script>window.__brief_api='
+                             + json.dumps(f"/action?jeton={jeton}") + ";</script>")
+                page = re.sub(r"(<body[^>]*>)", r"\1" + injection, page, count=1)
+                corps = page.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(corps)))
+                self.end_headers()
+                self.wfile.write(corps)
+                return
+            self.send_error(404)
+
+        def do_POST(self):
+            if not self._autorise():
+                return
+            taille = int(self.headers.get("Content-Length") or 0)
+            try:
+                msg = json.loads(self.rfile.read(taille) or b"{}")
+            except ValueError:
+                self.send_error(400, "corps illisible")
+                return
+            try:
+                ok, texte = executer_action(cfg, msg)
+            except Exception as ex:                 # une action ratee ne doit pas tuer le serveur
+                log(f"action {msg.get('action')} en échec : {ex}", "ERROR")
+                ok, texte = False, str(ex)
+            corps = json.dumps({"ok": ok, "message": texte}).encode()
+            self.send_response(200 if ok else 500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(corps)))
+            self.end_headers()
+            self.wfile.write(corps)
+
+    # 127.0.0.1 seulement : rien n'est expose au reseau
+    serveur = ThreadingHTTPServer(("127.0.0.1", port), Poignee)
+    vrai_port = serveur.server_address[1]
+    url = f"http://127.0.0.1:{vrai_port}/?jeton={jeton}"
+
+    fil = threading.Thread(target=serveur.serve_forever, daemon=True)
+    fil.start()
+
+    proc = None
+    if ouvrir:
+        nav = trouver_navigateur()
+        largeur = int(cfg.get("fenetre_largeur", 520))
+        hauteur = int(cfg.get("fenetre_hauteur", 860))
+        if nav:
+            proc = subprocess.Popen(
+                [nav, f"--app={url}", f"--window-size={largeur},{hauteur}",
+                 "--user-data-dir=" + str(BASE / "navigateur")],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            webbrowser.open(url)
+    print(f"  fenêtre servie sur {url}", flush=True)
+
+    debut = time.time()
+    try:
+        while True:
+            time.sleep(0.5)
+            if proc is not None and proc.poll() is not None:
+                break                               # la fenetre a ete fermee
+            if duree_max and time.time() - debut > duree_max:
+                break
+            if proc is None and time.time() - etat["dernier_contact"] > 900:
+                break                               # onglet abandonne
+    except KeyboardInterrupt:
+        pass
+    finally:
+        serveur.shutdown()
+    return 0
+
+def cmd_fenetre(cfg, args):
+    return servir(cfg, port=args.port, ouvrir=not args.sans_ouvrir,
+                  duree_max=args.duree)
+
 def cmd_render(cfg, args):
     planning, err, devoirs, revisions = build(cfg)
     print(f"{OUT_HTML}  ({len(planning)} cours, {len(devoirs)} devoirs, "
@@ -1828,6 +2002,10 @@ def main():
     p = sub.add_parser("veille")
     p.add_argument("--rejouer", action="store_true",
                    help="oublie les devoirs connus et re-annonce")
+    p = sub.add_parser("fenetre")
+    p.add_argument("--port", type=int, default=0)
+    p.add_argument("--sans-ouvrir", action="store_true", dest="sans_ouvrir")
+    p.add_argument("--duree", type=int, default=None)
     sub.add_parser("prenom"); sub.add_parser("devoir-ajouter")
     sub.add_parser("doctor")
     args = ap.parse_args()
@@ -1836,7 +2014,7 @@ def main():
             "zeus-test": cmd_zeus_test, "zeus-coller": cmd_zeus_coller, "zeus-enregistrer": cmd_zeus_enregistrer,
             "zeus-connexion": cmd_zeus_connexion,
             "zeus-deconnexion": cmd_zeus_deconnexion, "zeus-groupe": cmd_zeus_groupe,
-            "cocher": cmd_cocher, "veille": cmd_veille, "prenom": cmd_prenom,
+            "cocher": cmd_cocher, "veille": cmd_veille, "prenom": cmd_prenom, "fenetre": cmd_fenetre,
             "devoir-ajouter": cmd_devoir_ajouter, "doctor": cmd_doctor,
             }[args.cmd or "show"](cfg, args)
 
