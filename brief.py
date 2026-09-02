@@ -706,6 +706,19 @@ JS = r"""<script>
     }
   }
 
+  /* --- se connecter a Zeus depuis la fenetre ---------------------------- */
+  document.querySelectorAll("[data-connecter]").forEach(b => {
+    b.addEventListener("click", ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (!pont) { b.textContent = "Disponible seulement dans l'app"; return; }
+      const avant = b.innerHTML;
+      b.textContent = "Ouverture de la connexion…";
+      pont.postMessage({action: "connecter"});
+      setTimeout(() => { b.innerHTML = avant; }, 6000);
+    });
+  });
+
   /* --- navigation entre les vues -------------------------------------- */
   function montrer(nom) {
     document.querySelectorAll(".vue").forEach(v => v.classList.toggle("active", v.id === "v-" + nom));
