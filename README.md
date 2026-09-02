@@ -95,10 +95,23 @@ L'installation trouve le carnet Obsidian toute seule, construit l'application
 dans le dossier Applications, et programme l'ouverture du matin. Elle se termine
 par un état des lieux de ce qui marche et de ce qui manque.
 
-Ensuite, un clic sur **Se connecter à Zeus** dans la fenêtre, et il ne reste plus
-qu'à choisir sa classe.
+À la première ouverture, la fenêtre demande simplement comment vous appeler —
+on peut passer. Un clic sur la salutation permet d'en changer plus tard.
+
+Ensuite, un clic sur **Se connecter à Zeus**, et il ne reste plus qu'à choisir
+sa classe.
 
 <br>
+
+## Ajouter un devoir soi-même
+
+Tout n'arrive pas par les notes de cours. En bas de la liste des devoirs,
+**« + Ajouter un devoir »** ouvre trois champs : ce qu'il y a à faire, la
+matière — les matières déjà connues sont proposées — et la date de rendu.
+
+Le devoir n'est pas stocké dans un coin de l'application : il est écrit dans une
+note du carnet Obsidian, comme les autres. Il se coche de la même façon, se
+retrouve dans une recherche, et suit le carnet partout.
 
 ## D'où viennent les devoirs
 

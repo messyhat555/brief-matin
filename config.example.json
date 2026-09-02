@@ -19,5 +19,7 @@
   "jours_matin": "tous",
   "veille_secondes": 180,
   "semaines_avant": 1,
-  "semaines_apres": 5
+  "semaines_apres": 5,
+  "prenom_demande": false,
+  "dossier_devoirs": "10 Cours"
 }

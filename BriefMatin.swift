@@ -234,12 +234,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         connexion?.ouvrir(url: "https://zeus.ionis-it.com/home")
     }
 
+    /// Lance une commande du script, lui passe une entree, puis rafraichit.
+    func lancerPython(_ args: [String], entree: String) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            p.arguments = ["python3", script.path] + args
+            let tuyau = Pipe()
+            p.standardInput = tuyau
+            p.standardOutput = Pipe(); p.standardError = Pipe()
+            try? p.run()
+            tuyau.fileHandleForWriting.write(entree.data(using: .utf8)!)
+            tuyau.fileHandleForWriting.closeFile()
+            p.waitUntilExit()
+            DispatchQueue.main.async { self?.refresh() }
+        }
+    }
+
     /// Recoit les demandes de la page (cocher un devoir, se connecter).
     func userContentController(_ c: WKUserContentController,
                                didReceive message: WKScriptMessage) {
         guard let corps = message.body as? [String: Any] else { return }
         if corps["action"] as? String == "connecter" {
             DispatchQueue.main.async { self.connecterZeus() }
+            return
+        }
+        if corps["action"] as? String == "prenom" {
+            lancerPython(["prenom"], entree: (corps["valeur"] as? String) ?? "")
+            return
+        }
+        if corps["action"] as? String == "devoir" {
+            let charge: [String: Any] = [
+                "texte": corps["texte"] as? String ?? "",
+                "matiere": corps["matiere"] as? String ?? "",
+                "echeance": corps["echeance"] as? String ?? "",
+            ]
+            guard let data = try? JSONSerialization.data(withJSONObject: charge),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            lancerPython(["devoir-ajouter"], entree: json)
             return
         }
         guard corps["action"] as? String == "cocher",

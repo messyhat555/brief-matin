@@ -611,6 +611,42 @@ section { margin-bottom:28px; }
 .apres-item .pastille { margin-top:5px; }
 .focus-vide { color:var(--muted); font-size:15px; padding:52px 12px; text-align:center;
   font-family:ui-serif,"New York",Georgia,serif; }
+/* ---- premiere ouverture : le prenom ---- */
+.voile { position:fixed; inset:0; z-index:20; display:flex; align-items:center;
+  justify-content:center; padding:24px;
+  background:color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); }
+.dialogue { background:linear-gradient(to bottom, var(--card), var(--card2));
+  border:1px solid var(--line); border-radius:16px; padding:26px 24px;
+  box-shadow:var(--ombre-haute), var(--liseré); max-width:340px; width:100%;
+  text-align:center; animation:monte .35s both; }
+.dialogue h3 { font-family:ui-serif,"New York",Georgia,serif; font-size:21px;
+  font-weight:600; margin:0 0 6px; letter-spacing:-.3px; }
+.dialogue p { color:var(--fg2); font-size:13px; margin:0 0 18px; }
+.champ { width:100%; font:14px -apple-system,BlinkMacSystemFont,sans-serif;
+  color:var(--fg); background:var(--bg); border:1px solid var(--line);
+  border-radius:9px; padding:9px 12px; outline:none;
+  transition:border-color .15s, box-shadow .15s; }
+.champ:focus { border-color:var(--accent);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+.champ::placeholder { color:var(--muted); }
+.dialogue .actions { margin-top:16px; }
+
+/* ---- ajouter un devoir ---- */
+.ajout { display:flex; align-items:center; gap:8px; color:var(--muted);
+  font-size:12.5px; padding:9px 13px; border:1px dashed var(--line);
+  border-radius:11px; cursor:pointer; user-select:none; margin-top:2px;
+  transition:color .15s, border-color .15s, background .15s; }
+.ajout:hover { color:var(--accent); border-color:var(--accent);
+  background:var(--survol); }
+.ajout .plus { font-size:15px; line-height:1; font-weight:500; }
+.form-devoir { background:linear-gradient(to bottom, var(--card), var(--card2));
+  border:1px solid var(--line); border-radius:12px; padding:13px;
+  box-shadow:var(--ombre), var(--liseré); animation:monte .28s both; }
+.form-devoir .champ + .champ, .form-devoir .duo { margin-top:8px; }
+.duo { display:grid; grid-template-columns:1fr 130px; gap:8px; }
+.form-devoir .actions { margin-top:11px; justify-content:flex-end; }
+.form-devoir .bouton { font-size:12.5px; padding:7px 15px; }
 .pied { margin-top:30px; padding-top:13px; border-top:1px solid var(--ligne-douce);
   color:var(--muted); font-size:10.5px; display:flex; justify-content:space-between;
   align-items:center; gap:10px; letter-spacing:.03em; }
@@ -704,6 +740,65 @@ JS = r"""<script>
       cur.style.left = "calc(" + (r * 100).toFixed(2) + "% - 1px)";
       cur.hidden = false;
     }
+  }
+
+  /* --- premiere ouverture : le prenom ---------------------------------- */
+  const voile = document.getElementById("voile-prenom");
+  if (voile) {
+    const champ = document.getElementById("p-nom");
+    const envoyer = () => {
+      voile.hidden = true;
+      if (!pont) return;
+      pont.postMessage({action: "prenom", valeur: (champ.value || "").trim()});
+    };
+    const titre = document.querySelector("[data-changer-prenom]");
+    if (titre) {
+      titre.style.cursor = "pointer";
+      titre.addEventListener("click", () => {
+        voile.hidden = false; setTimeout(() => { champ.focus(); champ.select(); }, 40);
+      });
+    }
+    voile.addEventListener("click", ev => {
+      if (ev.target === voile) voile.hidden = true;   // clic hors du cadre
+    });
+    champ.addEventListener("keydown", ev => {
+      if (ev.key === "Escape") voile.hidden = true;
+    });
+    voile.querySelector("[data-valider-prenom]").addEventListener("click", envoyer);
+    voile.querySelector("[data-sauter-prenom]").addEventListener("click", () => {
+      champ.value = ""; envoyer();
+    });
+    if (!voile.hidden) setTimeout(() => champ.focus(), 60);
+    champ.addEventListener("keydown", ev => { if (ev.key === "Enter") envoyer(); });
+  }
+
+  /* --- ajouter un devoir a la main ------------------------------------- */
+  const form = document.getElementById("form-devoir");
+  const ouvrir = document.querySelector("[data-ouvrir-ajout]");
+  if (form && ouvrir) {
+    const texte = document.getElementById("d-texte");
+    const matiere = document.getElementById("d-matiere");
+    const date = document.getElementById("d-date");
+    const montrerForm = (oui) => {
+      form.hidden = !oui; ouvrir.hidden = oui;
+      if (oui) setTimeout(() => texte.focus(), 40);
+    };
+    ouvrir.addEventListener("click", () => montrerForm(true));
+    form.querySelector("[data-annuler-ajout]").addEventListener("click", () => {
+      texte.value = ""; montrerForm(false);
+    });
+    const valider = () => {
+      const t = (texte.value || "").trim();
+      if (!t) { texte.focus(); return; }
+      if (!pont) { texte.value = "Disponible seulement dans l'app"; return; }
+      pont.postMessage({action: "devoir", texte: t,
+                        matiere: (matiere.value || "").trim(),
+                        echeance: date.value || ""});
+      texte.value = ""; montrerForm(false);
+    };
+    form.querySelector("[data-valider-ajout]").addEventListener("click", valider);
+    [texte, matiere, date].forEach(c =>
+      c.addEventListener("keydown", ev => { if (ev.key === "Enter") valider(); }));
   }
 
   /* --- se connecter a Zeus depuis la fenetre ---------------------------- */
@@ -994,7 +1089,8 @@ def render_html(cfg, planning, planning_err, devoirs, revisions, semaines=None,
 
     prenom = (cfg.get("prenom") or "").strip()
     P.append('<div class="jour">' + e(date_fr(a)) + "</div>")
-    P.append("<h1>" + e(salutation(maintenant))
+    P.append('<h1 data-changer-prenom title="Changer de prénom">'
+             + e(salutation(maintenant))
              + ((" " + e(prenom)) if prenom else "") + "</h1>")
 
     suivant = next((c for c in planning
@@ -1101,6 +1197,12 @@ def render_html(cfg, planning, planning_err, devoirs, revisions, semaines=None,
             precedent = c
     P.append("</section>")
 
+    matieres = sorted({d["matiere"] for d in devoirs}
+                      | {r["matiere"] for r in revisions})
+    dossier = Path(cfg["vault"]) / cfg.get("dossier_devoirs", "10 Cours")
+    if dossier.is_dir():
+        matieres = sorted(set(matieres) | {x.name for x in dossier.iterdir()
+                                           if x.is_dir()})
     P.append('<section id="rendre"><h2>À rendre</h2>')
     if not devoirs:
         P.append('<div class="vide">Rien à rendre. Profites-en.</div>')
@@ -1124,6 +1226,18 @@ def render_html(cfg, planning, planning_err, devoirs, revisions, semaines=None,
                          + '<span class="matiere"><span class="pastille"></span>'
                          + e(d["matiere"]) + "</span>" + quand + "</div></div></div>")
             P.append("</div>")
+    P.append('<div class="ajout" data-ouvrir-ajout>'
+             '<span class="plus">+</span> Ajouter un devoir</div>')
+    P.append('<div class="form-devoir" id="form-devoir" hidden>'
+             '<input class="champ" id="d-texte" placeholder="Ce qu\'il y a à faire" '
+             'maxlength="200">'
+             '<div class="duo"><input class="champ" id="d-matiere" list="les-matieres" '
+             'placeholder="Matière"><input class="champ" id="d-date" type="date"></div>'
+             '<datalist id="les-matieres">'
+             + "".join("<option value=\"" + e(m) + "\">" for m in matieres)
+             + "</datalist>"
+             '<div class="actions"><span class="bouton" data-annuler-ajout>Annuler</span>'
+             '<span class="bouton fort" data-valider-ajout>Ajouter</span></div></div>')
     P.append("</section>")
 
     if revisions:
@@ -1188,6 +1302,19 @@ def render_html(cfg, planning, planning_err, devoirs, revisions, semaines=None,
     P.append("</div>")
 
     P.append('<div class="vue" id="v-focus"><div id="focus-ici"></div></div>')
+
+    premiere_fois = not cfg.get("prenom_demande") and not prenom
+    P.append('<div class="voile" id="voile-prenom"'
+             + ("" if premiere_fois else " hidden")
+             + '><div class="dialogue">'
+             + ("<h3>Bonjour</h3>" if premiere_fois else "<h3>Ton prénom</h3>")
+             + "<p>Comment veux-tu qu'on t'appelle&nbsp;?</p>"
+             + '<input class="champ" id="p-nom" placeholder="Ton prénom"'
+             + ' maxlength="40" value="' + e(prenom) + '">'
+             + '<div class="actions">'
+             + '<span class="bouton" data-sauter-prenom>Sans prénom</span>'
+             + '<span class="bouton fort" data-valider-prenom>Continuer</span>'
+             + "</div></div></div>")
 
     donnees = {
         "revisions": len(revisions),
@@ -1341,6 +1468,79 @@ def cmd_veille(cfg, args):
     for d in nouveaux:
         print(f"     [{d['matiere']}] {d['texte'][:60]}")
     return 0
+
+def cmd_prenom(cfg, args):
+    """Enregistre le prenom affiche dans la salutation (recu sur stdin)."""
+    nom = sys.stdin.read().strip()[:40]
+    cfg["prenom"] = nom or None
+    cfg["prenom_demande"] = True      # meme vide, on ne redemande pas
+    CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+    os.chmod(CONFIG_PATH, 0o600)
+    print(f"  [OK ] prénom : {nom or '(aucun)'}")
+    return 0
+
+NOTE_DEVOIRS = "Devoirs ajoutés"
+
+def cmd_devoir_ajouter(cfg, args):
+    """Ajoute un devoir saisi a la main, dans une note du vault.
+
+    On ecrit dans Obsidian plutot que dans un fichier a part : le carnet reste
+    la seule source, et le devoir se coche comme les autres."""
+    try:
+        d = json.loads(sys.stdin.read())
+    except (ValueError, json.JSONDecodeError) as ex:
+        print(f"  [KO ] entrée illisible : {ex}")
+        return 1
+    texte = str(d.get("texte") or "").strip()
+    if not texte:
+        print("  [KO ] le devoir est vide")
+        return 1
+    matiere = sanitize_matiere(d.get("matiere")) or "Divers"
+    echeance = str(d.get("echeance") or "").strip()
+    if echeance:
+        try:
+            dt.date.fromisoformat(echeance)
+        except ValueError:
+            print(f"  [KO ] date incompréhensible : {echeance}")
+            return 1
+
+    vault = Path(cfg["vault"])
+    chemin = vault / cfg.get("dossier_devoirs", "10 Cours") / matiere / f"{NOTE_DEVOIRS}.md"
+    ligne = "- [ ] " + texte + (f" 📅 {echeance}" if echeance else "")
+
+    if chemin.exists():
+        contenu = chemin.read_text(encoding="utf-8").rstrip("\n")
+        if "## À faire" not in contenu:
+            contenu += "\n\n## À faire\n"
+        contenu += "\n" + ligne + "\n"
+    else:
+        contenu = ("---\ntype: devoirs\n"
+                   f"matiere: \"{matiere}\"\n"
+                   'tags: ["devoirs"]\ngenere_par: brief-matin\n---\n\n'
+                   f"# Devoirs — {matiere}\n\n"
+                   "*Ajoutés à la main depuis la fenêtre du matin.*\n\n"
+                   "## À faire\n\n" + ligne + "\n")
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    tmp = chemin.with_suffix(".tmp")
+    tmp.write_text(contenu, encoding="utf-8")
+    os.replace(tmp, chemin)
+
+    # on marque le devoir comme deja vu : inutile de se notifier soi-meme
+    try:
+        vues = json.loads(TACHES_VUES.read_text())
+        if isinstance(vues, dict):
+            for t in lire_taches(cfg)[0]:
+                vues.setdefault(empreinte(t), dt.date.today().isoformat())
+            TACHES_VUES.write_text(json.dumps(vues, ensure_ascii=False))
+    except (OSError, ValueError):
+        pass
+
+    print(f"  [OK ] ajouté à {chemin.relative_to(vault)}")
+    return 0
+
+def sanitize_matiere(nom):
+    nom = re.sub(r'[\\/:*?"<>|#\^\[\]]', "-", str(nom or "")).strip()
+    return re.sub(r"\s+", " ", nom)[:60]
 
 def cmd_render(cfg, args):
     planning, err, devoirs, revisions = build(cfg)
@@ -1617,6 +1817,7 @@ def main():
     p = sub.add_parser("veille")
     p.add_argument("--rejouer", action="store_true",
                    help="oublie les devoirs connus et re-annonce")
+    sub.add_parser("prenom"); sub.add_parser("devoir-ajouter")
     sub.add_parser("doctor")
     args = ap.parse_args()
     cfg = load_config()
@@ -1624,7 +1825,8 @@ def main():
             "zeus-test": cmd_zeus_test, "zeus-coller": cmd_zeus_coller, "zeus-enregistrer": cmd_zeus_enregistrer,
             "zeus-connexion": cmd_zeus_connexion,
             "zeus-deconnexion": cmd_zeus_deconnexion, "zeus-groupe": cmd_zeus_groupe,
-            "cocher": cmd_cocher, "veille": cmd_veille, "doctor": cmd_doctor,
+            "cocher": cmd_cocher, "veille": cmd_veille, "prenom": cmd_prenom,
+            "devoir-ajouter": cmd_devoir_ajouter, "doctor": cmd_doctor,
             }[args.cmd or "show"](cfg, args)
 
 if __name__ == "__main__":
