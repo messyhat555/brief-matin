@@ -179,7 +179,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         window.title = "Brief du matin"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.isMovableByWindowBackground = true
         window.center()
         window.setFrameAutosaveName("BriefMatin")
 
@@ -196,6 +195,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        // sans cela le clavier ne parvient pas aux champs de la page
+        window.makeFirstResponder(web)
 
         // c'est ici, fenetre au premier plan, que macOS peut poser la question
         // des notifications ; le mode --notifier la trouvera deja repondue
@@ -303,6 +304,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             }
             DispatchQueue.main.async { self.load() }
         }
+    }
+
+    /// Rendre le clavier a la page apres un rechargement.
+    func webView(_ w: WKWebView, didFinish navigation: WKNavigation!) {
+        window?.makeFirstResponder(w)
     }
 
     func load() {

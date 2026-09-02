@@ -654,6 +654,11 @@ section { margin-bottom:28px; }
 .duo { display:grid; grid-template-columns:1fr 130px; gap:8px; }
 .form-devoir .actions { margin-top:11px; justify-content:flex-end; }
 .form-devoir .bouton { font-size:12.5px; padding:7px 15px; }
+.souffle { position:fixed; left:50%; bottom:26px; transform:translateX(-50%);
+  z-index:30; background:var(--accent); color:#fff; font-size:12.5px;
+  font-weight:600; padding:9px 16px; border-radius:22px; pointer-events:none;
+  box-shadow:0 6px 20px -6px rgba(0,0,0,.5); transition:opacity .4s;
+  animation:monte .3s both; }
 .pied { margin-top:30px; padding-top:13px; border-top:1px solid var(--ligne-douce);
   color:var(--muted); font-size:10.5px; display:flex; justify-content:space-between;
   align-items:center; gap:10px; letter-spacing:.03em; }
@@ -689,6 +694,14 @@ JS = r"""<script>
     return Promise.resolve(false);
   };
   const recharger = () => setTimeout(() => location.reload(), 250);
+  const souffler = (texte) => {
+    const t = document.createElement("div");
+    t.className = "souffle";
+    t.textContent = texte;
+    document.body.appendChild(t);
+    setTimeout(() => { t.style.opacity = "0"; }, 1600);
+    setTimeout(() => t.remove(), 2100);
+  };
   const donnees = JSON.parse(document.getElementById("donnees").textContent);
 
   /* --- cocher un devoir : ecrit dans la note Obsidian ------------------ */
@@ -776,7 +789,9 @@ JS = r"""<script>
       voile.hidden = true;
       if (!interactif()) return;
       if (!efface && !saisi) { champ.value = nomActuel; return; }
-      agir({action: "prenom", valeur: efface ? "" : saisi}).then(ok => { if (ok && api) recharger(); });
+      const envoye = efface ? "" : saisi;
+      souffler(envoye ? "Prénom : " + envoye : "Prénom retiré");
+      agir({action: "prenom", valeur: envoye}).then(ok => { if (ok && api) recharger(); });
     };
     const titre = document.querySelector("[data-changer-prenom]");
     if (titre) {
@@ -818,6 +833,7 @@ JS = r"""<script>
       const t = (texte.value || "").trim();
       if (!t) { texte.focus(); return; }
       if (!interactif()) { texte.value = "Disponible seulement dans l'app"; return; }
+      souffler("Devoir ajouté");
       agir({action: "devoir", texte: t, matiere: (matiere.value || "").trim(),
             echeance: date.value || ""}).then(ok => { if (ok && api) recharger(); });
       texte.value = ""; montrerForm(false);
@@ -1390,6 +1406,15 @@ def build(cfg):
                         encoding="utf-8")
     return planning, err, devoirs, revisions
 
+def journal(ligne):
+    """Trace horodatee des actions, pour comprendre apres coup."""
+    try:
+        BASE.mkdir(parents=True, exist_ok=True)
+        with open(BASE / "actions.log", "a") as f:
+            f.write(f"{dt.datetime.now():%d/%m %H:%M:%S}  {ligne}\n")
+    except OSError:
+        pass
+
 def empreinte(t):
     """Identifie une tache independamment de sa position dans le fichier."""
     return hashlib.sha256(
@@ -1497,7 +1522,9 @@ def cmd_veille(cfg, args):
 
 def cmd_prenom(cfg, args):
     """Enregistre le prenom affiche dans la salutation (recu sur stdin)."""
-    nom = sys.stdin.read().strip()[:40]
+    brut = sys.stdin.read()
+    nom = brut.strip()[:40]
+    journal(f"prenom: reçu {brut!r} -> {nom!r}")
     cfg["prenom"] = nom or None
     cfg["prenom_demande"] = True      # meme vide, on ne redemande pas
     CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
@@ -1517,6 +1544,7 @@ def cmd_devoir_ajouter(cfg, args):
     except (ValueError, json.JSONDecodeError) as ex:
         print(f"  [KO ] entrée illisible : {ex}")
         return 1
+    journal(f"devoir: reçu {d!r}")
     texte = str(d.get("texte") or "").strip()
     if not texte:
         print("  [KO ] le devoir est vide")
