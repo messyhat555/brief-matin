@@ -475,7 +475,8 @@ section { margin-bottom:28px; }
 .creneau:hover .bloc { transform:translateY(-1px); box-shadow:var(--ombre-haute), var(--liseré); }
 .bloc .nom { font-weight:640; letter-spacing:-.15px; font-size:14.5px; }
 .bloc .meta { color:var(--muted); font-size:12.5px; margin-top:3px; }
-.creneau.encours .bloc { background:linear-gradient(to bottom,
+.creneau.encours .bloc { background:var(--accent-doux);
+  background:linear-gradient(to bottom,
   color-mix(in srgb, var(--accent-doux) 75%, var(--card)), var(--accent-doux));
   border-color:transparent; border-left-color:var(--accent); }
 .etiq { display:block; font-size:9.5px; font-weight:750; letter-spacing:.1em;
@@ -526,6 +527,7 @@ section { margin-bottom:28px; }
   border:1px dashed var(--line); border-radius:12px; box-shadow:none; }
 .alerte { background:var(--orange-doux); color:var(--orange); border-radius:12px;
   padding:11px 14px; font-size:12.5px; margin-bottom:20px;
+  border:1px solid var(--line);
   border:1px solid color-mix(in srgb, var(--orange) 22%, transparent); }
 .alerte b { font-weight:670; }
 .zeus-actions { margin-top:11px; }
@@ -558,7 +560,9 @@ section { margin-bottom:28px; }
   background-image:repeating-linear-gradient(to bottom, transparent 0,
     transparent calc(var(--pas) - 1px), var(--ligne-douce) calc(var(--pas) - 1px),
     var(--ligne-douce) var(--pas)); }
-.jour-col.aujourdhui { border-color:color-mix(in srgb, var(--accent) 45%, transparent);
+.jour-col.aujourdhui { border-color:var(--accent);
+  border-color:color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow:var(--ombre);
   box-shadow:0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent), var(--ombre); }
 .jour-tete { text-align:center; font-size:9.5px; font-weight:680; color:var(--fg2);
   padding:4px 0 5px; text-transform:uppercase; letter-spacing:.07em; }
@@ -614,6 +618,7 @@ section { margin-bottom:28px; }
 /* ---- premiere ouverture : le prenom ---- */
 .voile { position:fixed; inset:0; z-index:20; display:flex; align-items:center;
   justify-content:center; padding:24px;
+  background:var(--bg);
   background:color-mix(in srgb, var(--bg) 82%, transparent);
   backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); }
 .dialogue { background:linear-gradient(to bottom, var(--card), var(--card2));
@@ -659,7 +664,8 @@ section { margin-bottom:28px; }
   background:var(--vert); flex:0 0 auto; }
 .etat-zeus.bientot::before { background:var(--orange); }
 .etat-zeus.mort::before { background:var(--rouge); }
-.etat-zeus.mort { color:var(--rouge); border-color:color-mix(in srgb, var(--rouge) 35%, transparent); }
+.etat-zeus.mort { color:var(--rouge); border-color:var(--rouge);
+  border-color:color-mix(in srgb, var(--rouge) 35%, transparent); }
 .etat-zeus .verbe { opacity:0; margin-left:2px; transition:opacity .15s; }
 .etat-zeus:hover .verbe { opacity:1; }
 """
@@ -746,10 +752,15 @@ JS = r"""<script>
   const voile = document.getElementById("voile-prenom");
   if (voile) {
     const champ = document.getElementById("p-nom");
-    const envoyer = () => {
+    const nomActuel = champ.defaultValue || "";
+    // "Continuer" a vide ne doit pas effacer un prenom deja connu : seul
+    // "Sans prenom" efface, et il le dit.
+    const envoyer = (efface) => {
+      const saisi = (champ.value || "").trim();
       voile.hidden = true;
       if (!pont) return;
-      pont.postMessage({action: "prenom", valeur: (champ.value || "").trim()});
+      if (!efface && !saisi) { champ.value = nomActuel; return; }
+      pont.postMessage({action: "prenom", valeur: efface ? "" : saisi});
     };
     const titre = document.querySelector("[data-changer-prenom]");
     if (titre) {
@@ -764,12 +775,12 @@ JS = r"""<script>
     champ.addEventListener("keydown", ev => {
       if (ev.key === "Escape") voile.hidden = true;
     });
-    voile.querySelector("[data-valider-prenom]").addEventListener("click", envoyer);
+    voile.querySelector("[data-valider-prenom]").addEventListener("click", () => envoyer(false));
     voile.querySelector("[data-sauter-prenom]").addEventListener("click", () => {
-      champ.value = ""; envoyer();
+      champ.value = ""; envoyer(true);
     });
     if (!voile.hidden) setTimeout(() => champ.focus(), 60);
-    champ.addEventListener("keydown", ev => { if (ev.key === "Enter") envoyer(); });
+    champ.addEventListener("keydown", ev => { if (ev.key === "Enter") envoyer(false); });
   }
 
   /* --- ajouter un devoir a la main ------------------------------------- */

@@ -261,6 +261,31 @@ avec toutes ses protections, et tu ne transmets que le jeton final.
 Après avoir changé `heure_matin`, relance `./install.sh` pour reprogrammer le
 réveil.
 
+## Compatibilité
+
+L'application est compilée en **binaire universel** : une tranche `arm64` et une
+tranche `x86_64` réunies par `lipo`, donc Apple Silicon comme Intel. La machine
+qui compile n'est pas forcément celle qui exécute ; si une architecture ne peut
+pas être produite, l'installeur l'ignore et poursuit avec l'autre.
+
+```bash
+lipo -archs "/Applications/Brief Matin.app/Contents/MacOS/BriefMatin"
+# x86_64 arm64
+```
+
+Le reste — le script Python, les agents launchd — ne dépend d'aucune
+architecture.
+
+**Version minimale : macOS 12.** Le rendu utilise `color-mix()`, apparu dans
+Safari 16.2 (macOS 13) ; les cinq endroits où son absence se verrait portent une
+valeur de repli déclarée juste avant. Sur macOS 12 l'application reste donc
+complète, avec quelques teintes moins nuancées.
+
+**Hors macOS**, le script Python et le pipeline fonctionnent (`render`, `veille`,
+`cocher`, `zeus-*`) ; il manque la fenêtre native, l'agent launchd et les
+notifications. Une ligne de cron et un navigateur ouvert sur `brief.html` font
+l'essentiel.
+
 ## Désinstallation
 
 ```bash

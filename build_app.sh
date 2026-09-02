@@ -12,8 +12,25 @@ command -v swiftc >/dev/null || {
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-swiftc -O -o "$APP/Contents/MacOS/BriefMatin" "$REPO/BriefMatin.swift" \
-  -framework Cocoa -framework WebKit
+# Binaire universel : une tranche par architecture, reunies par lipo. La
+# machine qui compile n'est pas forcement celle qui executera.
+TMP="$(mktemp -d)"
+TRANCHES=""
+for A in arm64 x86_64; do
+  if swiftc -O -target "$A-apple-macos12" -o "$TMP/BriefMatin-$A" \
+       "$REPO/BriefMatin.swift" -framework Cocoa -framework WebKit 2>/dev/null; then
+    TRANCHES="$TRANCHES $TMP/BriefMatin-$A"
+    echo "  tranche $A compilée"
+  else
+    echo "  tranche $A indisponible, ignorée"
+  fi
+done
+if [ -z "$TRANCHES" ]; then
+  echo "Aucune architecture n'a pu être compilée." >&2
+  exit 1
+fi
+lipo -create $TRANCHES -output "$APP/Contents/MacOS/BriefMatin"
+rm -rf "$TMP"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

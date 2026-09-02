@@ -83,7 +83,8 @@ on s'identifie, et c'est reparti.
 
 ## Installer
 
-Il faut un Mac, Obsidian, et un compte dans une école IONIS.
+Il faut un Mac — Apple Silicon ou Intel, macOS 12 ou plus récent —,
+Obsidian, et un compte dans une école IONIS.
 
 ```bash
 git clone https://github.com/messyhat555/brief-matin.git
